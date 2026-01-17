@@ -1,0 +1,365 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+:root {
+  --background: #000000;
+  --foreground: #ffffff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* 
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+*/
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* AI Completion Ghost Styles */
+.completion-ghost {
+  color: #60a5fa;
+  opacity: 0.5;
+}
+
+/* Completion mode indicator */
+.completion-active .ProseMirror {
+  caret-color: #60a5fa;
+}
+
+/* Saved completion marker */
+.saved-completion-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: #27272a;
+  border: 1px solid #52525b;
+  border-radius: 2px;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: all 0.2s ease;
+  overflow: hidden;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.saved-completion-mark:hover {
+  background: #3f3f46;
+  border-color: #71717a;
+}
+
+/* AI Generation Loading Animation */
+.ai-loading-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: middle;
+  z-index: 100;
+}
+
+.ai-loading-indicator.absolute {
+  transform: translateY(-50%);
+}
+
+.ai-loading-indicator .orbit-container {
+  position: relative;
+  width: 20px;
+  height: 20px;
+}
+
+.ai-loading-indicator .orbit-dot {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #60a5fa;
+}
+
+.ai-loading-indicator .orbit-dot:nth-child(1) {
+  animation: orbit1 1.2s ease-in-out infinite;
+}
+
+.ai-loading-indicator .orbit-dot:nth-child(2) {
+  animation: orbit2 1.2s ease-in-out infinite;
+  animation-delay: 0.4s;
+}
+
+.ai-loading-indicator .orbit-dot:nth-child(3) {
+  animation: orbit3 1.2s ease-in-out infinite;
+  animation-delay: 0.8s;
+}
+
+@keyframes orbit1 {
+  0%, 100% {
+    top: 50%;
+    left: 0;
+    transform: translate(0, -50%) scale(1);
+    opacity: 1;
+    background: #60a5fa;
+  }
+  33% {
+    top: 0;
+    left: 50%;
+    transform: translate(-50%, 0) scale(1.2);
+    opacity: 0.8;
+    background: #a78bfa;
+  }
+  66% {
+    top: 50%;
+    left: 100%;
+    transform: translate(-100%, -50%) scale(0.8);
+    opacity: 0.6;
+    background: #f472b6;
+  }
+}
+
+@keyframes orbit2 {
+  0%, 100% {
+    top: 50%;
+    left: 0;
+    transform: translate(0, -50%) scale(1);
+    opacity: 1;
+    background: #60a5fa;
+  }
+  33% {
+    top: 0;
+    left: 50%;
+    transform: translate(-50%, 0) scale(1.2);
+    opacity: 0.8;
+    background: #a78bfa;
+  }
+  66% {
+    top: 50%;
+    left: 100%;
+    transform: translate(-100%, -50%) scale(0.8);
+    opacity: 0.6;
+    background: #f472b6;
+  }
+}
+
+@keyframes orbit3 {
+  0%, 100% {
+    top: 50%;
+    left: 0;
+    transform: translate(0, -50%) scale(1);
+    opacity: 1;
+    background: #60a5fa;
+  }
+  33% {
+    top: 0;
+    left: 50%;
+    transform: translate(-50%, 0) scale(1.2);
+    opacity: 0.8;
+    background: #a78bfa;
+  }
+  66% {
+    top: 50%;
+    left: 100%;
+    transform: translate(-100%, -50%) scale(0.8);
+    opacity: 0.6;
+    background: #f472b6;
+  }
+}
+
+/* Hide cursor during generation */
+.generating .ProseMirror {
+  caret-color: transparent;
+}
+
+/* Mobile FAB animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-subtle {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);
+  }
+}
+
+/* Mobile control bar entrance animation */
+.fixed.bottom-6 > div,
+.fixed.bottom-6 > button {
+  animation: fadeInUp 0.2s ease-out;
+}
+
+/* Subtle pulse on main FAB to draw attention */
+.fixed.bottom-6 button[title="Generate AI completion"] {
+  animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+.fixed.bottom-6 button[title="Generate AI completion"]:hover {
+  animation: none;
+}
+
+/* Editor prose overrides - fix spacing issues */
+.prose.prose-invert p {
+  margin-top: 0;
+  margin-bottom: 0.5em;
+}
+
+.prose.prose-invert > :first-child {
+  margin-top: 0;
+}
+
+.prose.prose-invert > :last-child {
+  margin-bottom: 0;
+}
+
+/* Editor styling - ensure inline styles take precedence */
+.editor-area .ProseMirror {
+  transition: padding 0.2s ease, line-height 0.2s ease;
+}
+
+/* Override prose plugin defaults to allow dynamic control */
+.editor-area .prose,
+.editor-area .prose-invert,
+.editor-area .prose *,
+.editor-area .prose-invert *,
+.editor-area .ProseMirror,
+.editor-area .ProseMirror * {
+  line-height: inherit !important;
+}
+
+/* Range input styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 6px;
+  background: #3f3f46;
+  border-radius: 3px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #3b82f6;
+  cursor: pointer;
+  margin-top: -5px;
+  transition: transform 0.1s;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+}
+
+input[type="range"]::-moz-range-track {
+  width: 100%;
+  height: 6px;
+  background: #3f3f46;
+  border-radius: 3px;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #3b82f6;
+  cursor: pointer;
+  border: none;
+}
+
+/* Mobile Editor Styles - applied via .mobile-editor class */
+.ProseMirror.mobile-editor {
+  font-size: 16px !important;
+  min-height: calc(100vh - 100px);
+  line-height: 1.05 !important;
+  padding: 0.5rem 0.35rem !important;
+}
+
+.ProseMirror.mobile-editor *,
+.ProseMirror.mobile-editor p,
+.ProseMirror.mobile-editor span,
+.ProseMirror.mobile-editor div {
+  line-height: 1.05 !important;
+}
+
+.ProseMirror.mobile-editor p {
+  margin: 0 0 0.1em 0 !important;
+}
+
+.ProseMirror.mobile-editor > * + * {
+  margin-top: 0.1em !important;
+}
+
+/* Fallback media query */
+@media (max-width: 768px) {
+  .editor-area .ProseMirror {
+    font-size: 16px !important;
+    min-height: calc(100vh - 100px);
+    line-height: 1.05 !important;
+    padding: 0.5rem 0.35rem !important;
+  }
+  
+  .editor-area .ProseMirror *,
+  .editor-area .ProseMirror p {
+    line-height: 1.05 !important;
+  }
+  
+  .editor-area .ProseMirror p {
+    margin: 0 0 0.1em 0 !important;
+  }
+}
+
+/* Mobile Sidebar Overlay */
+@media (max-width: 768px) {
+  .sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(2px);
+    z-index: 55;
+    animation: fadeIn 0.2s ease-out;
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
+
+/* Mobile FAB touch fix - ensure FAB is always clickable above editor */
+@media (max-width: 768px) {
+  .editor-area {
+    /* Prevent editor from capturing touches in FAB area */
+    position: relative;
+    z-index: 1;
+  }
+  
+  .editor-area .ProseMirror {
+    /* Add bottom padding to prevent content under FAB */
+    padding-bottom: 100px !important;
+  }
+}

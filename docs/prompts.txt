@@ -1,0 +1,11 @@
+refer to @docs/langchain.txt to know how to implement the following: using a model from open router (have a special file that selects which model      │
+│   to use and tell me how to use it to select a model to be used throught all this project, the idea i want to implement, is kinda like an auto           │
+│   complition, so there will be collabsable side bar from the left, where it has a button, lets say i am writing, and want to auto complete 2             │
+│   scentances from the last word i wrote, i click the button of the left sidebar, and langchain takes all text i wrote untill the last '.' i did, or      │
+│   the last 'new line' i did, and feed it to the llm through the api, with the following prompt "provide a two sentance long complition to this text:     │
+│    <the text that i wrote whcich will be pulled from the ducoment as discribed>, respond with only the complition you did", and then the output gets     │
+│    automaticly written after the last word i wrote in the document 
+
+
+
+

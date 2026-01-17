@@ -1,0 +1,19 @@
+{
+  "editor.spellCheck": false,
+  "editor.suggestOnTriggerCharacters": true,
+  "editor.suggestSelection": "first",
+  "typescript.preferences.importModuleSpecifier": "relative",
+  "javascript.preferences.importModuleSpecifier": "relative",
+  "files.associations": {
+    "*.css": "css"
+  },
+  "css.validate": false,
+  "less.validate": false,
+  "scss.validate": false,
+  "html.validate": false,
+  "javascript.validate.enable": true,
+  "typescript.validate.enable": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  }
+}
