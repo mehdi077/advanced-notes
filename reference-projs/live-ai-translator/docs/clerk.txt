@@ -1,0 +1,162 @@
+Clerk is easily my favorite way to handle auth. It feels like cheating because it saves you about three days of head-scratching over session management and security. Since we’re in 2026 and you're likely on Next.js 16, there are a few fresh conventions—like proxy.ts replacing middleware.ts—that we should get right from the jump.
+
+Here is the deep dive into setting this up with TypeScript.
+
+1. The "Must-Haves" (Installation & Env)
+First, grab the SDK. Clerk’s Next.js library is quite beefy, but in a good way—it handles the heavy lifting for both server and client.
+
+Bash
+npm install @clerk/nextjs
+In your .env.local, you need your keys. If you haven't grabbed them from the Clerk Dashboard, do that now.
+
+Code snippet
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
+CLERK_SECRET_KEY=sk_test_...
+
+# Routes for our custom pages (we'll make these in a bit)
+NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+2. The 2026 Edge: proxy.ts
+In Next.js 16, the community moved away from the name "middleware" to "proxy" to better describe that this code runs at the network boundary. This is where your auth logic lives.
+
+Create proxy.ts in your root (or /src):
+
+TypeScript
+import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
+
+// 1. Define which routes are public. 
+// Everything else will be locked down by default if we want.
+const isPublicRoute = createRouteMatcher(['/sign-in(.*)', '/sign-up(.*)', '/']);
+
+export default clerkMiddleware(async (auth, request) => {
+  if (!isPublicRoute(request)) {
+    await auth.protect(); // This automatically redirects unauthenticated users to sign-in
+  }
+});
+
+export const config = {
+  matcher: [
+    // Skip Next.js internals and static files
+    '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
+    // Always run for API routes
+    '/(api|trpc)(.*)',
+  ],
+};
+3. The Root Layout
+You have to wrap your app in <ClerkProvider />. This gives all your components access to the auth state. In your app/layout.tsx:
+
+TypeScript
+import { ClerkProvider } from '@clerk/nextjs'
+import './globals.css'
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <ClerkProvider>
+      <html lang="en">
+        <body>{children}</body>
+      </html>
+    </ClerkProvider>
+  )
+}
+4. Custom Auth Pages (Catch-all Routes)
+Clerk provides beautiful pre-built components, but to keep the user on your domain, you need catch-all routes.
+
+Sign In: app/sign-in/[[...sign-in]]/page.tsx
+
+TypeScript
+import { SignIn } from "@clerk/nextjs";
+
+export default function Page() {
+  return (
+    <div className="flex justify-center items-center min-h-screen">
+      <SignIn />
+    </div>
+  );
+}
+Sign Up: app/sign-up/[[...sign-up]]/page.tsx
+
+TypeScript
+import { SignUp } from "@clerk/nextjs";
+
+export default function Page() {
+  return (
+    <div className="flex justify-center items-center min-h-screen">
+      <SignUp />
+    </div>
+  );
+}
+5. Using Auth in Your Logic
+This is where the magic happens. You have two ways to play this: Server-side (fast, secure) and Client-side (interactive).
+
+A. Server Components (The Modern Way)
+
+Inside a Server Component, you use auth() for IDs and currentUser() for the full user object (names, emails, etc.).
+
+TypeScript
+import { auth, currentUser } from '@clerk/nextjs/server';
+
+export default async function DashboardPage() {
+  const { userId } = await auth();
+  const user = await currentUser();
+
+  if (!userId || !user) return <div>Not signed in</div>;
+
+  return (
+    <div>
+      <h1>Welcome back, {user.firstName}!</h1>
+      <p>Your ID is {userId}</p>
+    </div>
+  );
+}
+B. Client Components
+
+Use hooks for things like the UserButton or checking state on the fly.
+
+TypeScript
+"use client";
+import { useUser, UserButton } from "@clerk/nextjs";
+
+export function Navbar() {
+  const { isSignedIn, user, isLoaded } = useUser();
+
+  if (!isLoaded) return <span>Loading...</span>;
+
+  return (
+    <nav className="flex justify-between p-4">
+      {isSignedIn ? (
+        <div className="flex gap-4 items-center">
+          <span>Hey, {user.username}</span>
+          <UserButton />
+        </div>
+      ) : (
+        <a href="/sign-in">Login</a>
+      )}
+    </nav>
+  );
+}
+6. Pro Tip: TypeScript Metadata
+If you want to store custom data (like a "role" or "subscriptionTier") on the user, you can extend Clerk's types so you don't get TypeScript red squiggles.
+
+Create a types/globals.d.ts:
+
+TypeScript
+export {}
+
+declare global {
+  interface CustomJwtSessionClaims {
+    metadata: {
+      role?: "admin" | "user";
+      onboardingComplete?: boolean;
+    };
+  }
+}
+Now, when you call auth() in a server component, sessionClaims.metadata.role will be fully typed!
+
+Does this structure make sense for the app you're building, or were you planning on doing something more custom with the UI?
+
+Clerk Next.js 16 integration guide
+
+This video walks through the latest middleware and proxy setups for Next.js to ensure your routes are actually secure.
+
+Setting Up Protected Routes with Clerk and Next.js: A Step-by-Step Guide - YouTube
+Noor Mohammad · 276 views

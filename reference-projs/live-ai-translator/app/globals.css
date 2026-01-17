@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/* Light theme colors (default) */
+:root[data-theme="light"] {
+  --background: #ffffff;
+  --foreground: #171717;
+  --surface: #f8f9fa;
+  --surface-elevated: #ffffff;
+  --border: #e5e7eb;
+  --border-light: #f3f4f6;
+  --muted: #6b7280;
+  --muted-foreground: #9ca3af;
+  
+  /* Orb colors for light mode */
+  --orb-idle-gradient: radial-gradient(circle at 30% 30%, #cbd5e1 0%, #94a3b8 50%, #64748b 100%);
+  --orb-listening-gradient: radial-gradient(circle at 30% 30%, #67e8f9 0%, #22d3ee 50%, #0891b2 100%);
+  --orb-thinking-gradient: radial-gradient(circle at 30% 30%, #93c5fd 0%, #60a5fa 50%, #3b82f6 100%);
+  --orb-generating-gradient: radial-gradient(circle at 30% 30%, #c4b5fd 0%, #a78bfa 50%, #8b5cf6 100%);
+  --orb-speaking-gradient: radial-gradient(circle at 30% 30%, #d8b4fe 0%, #c084fc 50%, #a855f7 100%);
+}
+
+/* Dark theme colors */
+:root[data-theme="dark"] {
+  --background: #0a0a0c;
+  --foreground: #ffffff;
+  --surface: #1a1a1c;
+  --surface-elevated: #242426;
+  --border: #2a2a2c;
+  --border-light: #3a3a3c;
+  --muted: #9ca3af;
+  --muted-foreground: #6b7280;
+  
+  /* Orb colors for dark mode (keep existing vibrant colors) */
+  --orb-idle-gradient: radial-gradient(circle at 30% 30%, #64748b 0%, #475569 50%, #334155 100%);
+  --orb-listening-gradient: radial-gradient(circle at 30% 30%, #22d3ee 0%, #0891b2 50%, #164e63 100%);
+  --orb-thinking-gradient: radial-gradient(circle at 30% 30%, #60a5fa 0%, #3b82f6 50%, #1e40af 100%);
+  --orb-generating-gradient: radial-gradient(circle at 30% 30%, #a78bfa 0%, #8b5cf6 50%, #6d28d9 100%);
+  --orb-speaking-gradient: radial-gradient(circle at 30% 30%, #c084fc 0%, #a855f7 50%, #7e22ce 100%);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-border: var(--border);
+  --color-border-light: var(--border-light);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
