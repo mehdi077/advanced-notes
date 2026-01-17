@@ -153,6 +153,13 @@ export default function VoiceChat() {
     onVADMisfire: () => {
       console.log('VAD misfire (noise detected)');
     },
+    onLoadComplete: () => {
+      console.log('VAD loaded successfully');
+    },
+    onError: (error) => {
+      console.error('VAD error:', error);
+      setPermissionError('Failed to initialize voice detection: ' + error.message);
+    },
   });
 
   // Cancel everything and reset to idle
@@ -177,13 +184,23 @@ export default function VoiceChat() {
         setPermissionError(null);
         unlockAudio();
         
+        console.log('Starting VAD...');
+        console.log('VAD loading:', vad.loading);
+        console.log('VAD listening:', vad.listening);
+        
+        if (vad.loading) {
+          setPermissionError('Voice detection is still loading. Please wait...');
+          return;
+        }
+        
         // VAD handles its own microphone access
-        vad.start();
+        await vad.start();
         setIsListening(true);
         setStatus('listening');
+        console.log('VAD started successfully');
       } catch (err: any) {
         console.error("VAD start error:", err);
-        setPermissionError('Failed to start voice detection. Please check microphone permissions.');
+        setPermissionError('Failed to start voice detection: ' + (err.message || 'Unknown error'));
       }
     }
   }, [isListening, vad, setIsListening, setStatus]);
@@ -233,7 +250,8 @@ export default function VoiceChat() {
           <div className="px-4 py-3 md:px-6 md:py-4 border-b border-zinc-800 flex-shrink-0">
             <h2 className="text-lg md:text-xl font-semibold text-white pr-10">Voice Assistant</h2>
             <p className="text-xs md:text-sm text-zinc-400 mt-1">
-              {status === 'idle' ? 'Tap START to begin' : 
+              {vad.loading ? 'Loading voice detection...' :
+               status === 'idle' ? 'Tap START to begin' : 
                status === 'listening' ? 'Listening...' :
                status === 'transcribing' ? 'Transcribing...' :
                status === 'thinking' ? 'Thinking...' :
@@ -260,10 +278,10 @@ export default function VoiceChat() {
               {status === 'idle' && (
                 <button
                   onClick={toggleSession}
-                  disabled={isProcessing}
+                  disabled={isProcessing || vad.loading}
                   className="mt-4 px-6 py-2.5 md:px-8 md:py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-zinc-700 disabled:cursor-not-allowed rounded-full text-white font-medium text-sm md:text-base shadow-lg transition-colors"
                 >
-                  {isProcessing ? 'Loading...' : 'START'}
+                  {vad.loading ? 'Loading VAD...' : isProcessing ? 'Loading...' : 'START'}
                 </button>
               )}
 

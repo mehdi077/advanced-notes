@@ -21,6 +21,22 @@ export default function SimpleVisualizer({ status }: SimpleVisualizerProps) {
     }
   };
 
+  const getRingColor = () => {
+    switch (status) {
+      case 'listening':
+        return 'border-cyan-500';
+      case 'transcribing':
+      case 'thinking':
+        return 'border-blue-500';
+      case 'generating_audio':
+        return 'border-violet-500';
+      case 'speaking':
+        return 'border-purple-500';
+      default:
+        return 'border-zinc-500';
+    }
+  };
+
   const getStatusText = () => {
     switch (status) {
       case 'listening':
@@ -38,14 +54,23 @@ export default function SimpleVisualizer({ status }: SimpleVisualizerProps) {
     }
   };
 
+  const shouldPulse = status === 'listening' || status === 'speaking';
+
   return (
     <div className="flex flex-col items-center justify-center gap-4 py-6">
-      {/* Simple status indicator */}
-      <div className="relative">
+      {/* Status indicator with pulse rings for listening and speaking */}
+      <div className="relative w-20 h-20 flex items-center justify-center">
+        {/* Pulse rings - only for listening and speaking */}
+        {shouldPulse && (
+          <>
+            <div className={`absolute inset-0 rounded-full border-2 ${getRingColor()} opacity-75 animate-ping`} />
+            <div className={`absolute inset-2 rounded-full border-2 ${getRingColor()} opacity-50 animate-ping`} style={{ animationDelay: '0.3s' }} />
+          </>
+        )}
+        
+        {/* Core circle */}
         <div 
-          className={`w-16 h-16 rounded-full ${getStatusColor()} transition-colors duration-300 ${
-            status !== 'idle' ? 'animate-pulse' : ''
-          }`}
+          className={`w-16 h-16 rounded-full ${getStatusColor()} transition-colors duration-300 relative z-10`}
         />
       </div>
       
