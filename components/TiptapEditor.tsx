@@ -8,7 +8,8 @@ import { Highlight } from '@tiptap/extension-highlight';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { debounce } from 'lodash';
-import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, Mic } from 'lucide-react';
+import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
 import { CompletionMark } from '@/lib/completion-mark';
 import { SavedCompletion } from '@/lib/saved-completion';
@@ -49,6 +50,7 @@ interface ModelPricingMap {
 const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
+  const { setIsModalOpen } = useVoiceStore();
   const [selectedModel, setSelectedModel] = useState<ModelId>(DEFAULT_MODEL);
   const [isAutoCompleting, setIsAutoCompleting] = useState(false);
   const [autoCompleteError, setAutoCompleteError] = useState<string | null>(null);
@@ -1061,6 +1063,22 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                 {autoCompleteError}
               </div>
             )}
+          </div>
+
+          {/* Voice Assistant Button */}
+          <div className="flex flex-col gap-2">
+            <span className="text-sm text-zinc-400">Voice Assistant</span>
+            <button
+              type="button"
+              onClick={() => setIsModalOpen(true)}
+              className="flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 hover:bg-purple-700 rounded text-white font-medium transition-colors cursor-pointer"
+            >
+              <Mic size={18} />
+              Start Voice Chat
+            </button>
+            <div className="text-xs text-zinc-500">
+              Have a conversation with the AI assistant using your voice
+            </div>
           </div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-# Helm - AI-Powered Infinite Document
+# Advanced Notes - Helm AI-Powered Infinite Document
 
 Helm is a sophisticated writing application that integrates advanced AI text completion capabilities into a modern, minimalist editor interface. Built with Next.js and TipTap, this application transforms the writing process by providing intelligent, context-aware text suggestions that users can selectively accept or modify.
 
@@ -25,7 +25,7 @@ Helm is a sophisticated writing application that integrates advanced AI text com
 
 ## Technology Stack
 
-- **Frontend**: Next.js 16 with React 19
+- **Frontend**: Next.js 16.0.7 with React 19.2.0, Geist fonts
 - **Editor**: TipTap rich text editor with custom extensions
 - **Styling**: Tailwind CSS with custom dark theme
 - **Database**: SQLite for document persistence
@@ -43,7 +43,7 @@ Helm is a sophisticated writing application that integrates advanced AI text com
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/helm.git
+git clone https://github.com/anomalyco/advanced-notes.git  # Update with actual repo if different
 cd helm
 ```
 
@@ -115,7 +115,7 @@ POST /api/doc                  # Save document
 ### AI Services
 ```
 POST /api/autocomplete         # Generate text completion
-GET /api/models               # Fetch available AI models and pricing
+GET /api/models                # Fetch available AI models and pricing\nGET /api/prompts                # Manage custom prompts
 GET /api/balance              # Fetch account balance
 ```
 
@@ -123,9 +123,7 @@ GET /api/balance              # Fetch account balance
 
 ### Model Selection
 Configure available AI models in `lib/model-config.ts`. Default models include:
-- OpenAI GPT-4 Turbo
-- Anthropic Claude 3 Sonnet
-- Google Gemini Pro
+- GPT-4o Mini (default)\n- GPT-4o\n- Claude 3.5 Sonnet\n- Grok-4.1-fast\n- Deepseek v3.2 exp\n- Llama 3.1 70B
 
 ### Custom Prompts
 Enhance your writing experience with custom prompts:
@@ -139,15 +137,7 @@ Enhance your writing experience with custom prompts:
 ### Frontend Structure
 ```
 /
-├── app/
-│   ├── page.tsx              # Main application entry point
-│   ├── layout.tsx            # Global layout configuration
-│   └── globals.css           # Global styles
-├── components/
-│   └── TiptapEditor.tsx      # Main editor component
-└── lib/
-    ├── model-config.ts       # AI model configuration
-    └── completion-mark.ts    # Custom TipTap extension
+├── app/\n│   ├── page.tsx              # Infinite document editor page\n│   ├── layout.tsx            # Global layout with Geist fonts\n│   ├── globals.css           # Tailwind + custom styles\n│   └── api/\n│       ├── doc/route.ts\n│       ├── autocomplete/route.ts\n│       ├── models/route.ts\n│       ├── prompts/route.ts\n│       └── balance/route.ts\n├── components/\n│   └── TiptapEditor.tsx      # Core AI editor\n├── lib/\n│   ├── db.ts                 # SQLite database utils\n│   ├── model-config.ts       # AI models config\n│   ├── completion-mark.ts    # TipTap AI extension\n│   └── saved-completion.ts   # Completion state mgmt
 ```
 
 ### Backend Services

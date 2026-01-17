@@ -1,27 +1,20 @@
-# Helm Project Overview
+# Advanced Notes - Helm Project Overview
 
 ## Project Purpose
 Helm is an AI-powered infinite document writing application that integrates advanced AI text completion into a modern, minimalist editor interface. It allows users to generate contextual text suggestions and selectively accept them word-by-word, enhancing the writing process with intelligent assistance.
 
 ## Technology Stack
-- **Frontend**: Next.js 16 with React 19 for the web framework
+- **Frontend**: Next.js 16.0.7 with React 19.2.0, Geist fonts
 - **Editor**: TipTap rich text editor with custom extensions for AI completions
 - **AI Integration**: LangChain.js with OpenRouter API for model access
 - **Database**: SQLite (better-sqlite3) for local document persistence
 - **Styling**: Tailwind CSS v4 with custom dark theme and typography
 - **Language**: TypeScript for type safety
-- **Build Tools**: ESLint for linting, PostCSS for CSS processing
+- **Build Tools**: ESLint, PostCSS, Tailwind CSS v4\n- **Icons**: lucide-react
 
 ## Directory Structure Overview
 
-### Root Directory
-- `package.json` - Project metadata, scripts, and dependencies
-- `tsconfig.json` - TypeScript configuration
-- `next.config.ts` - Next.js build and runtime configuration
-- `eslint.config.mjs` - ESLint configuration for code linting
-- `postcss.config.mjs` - PostCSS configuration for Tailwind
-- `data.db` - SQLite database for storing documents
-- `next-env.d.ts` - Next.js TypeScript declarations
+### Root Directory\n- `package.json` - Dependencies and scripts (Next 16.0.7, React 19.2.0)\n- `tsconfig.json`, `next.config.ts`, `eslint.config.mjs`, `postcss.config.mjs`, `next-env.d.ts`\n- `data.db` - SQLite DB (with backups in dataBackup/)\n- `docs/` - Integration notes (Tiptap.txt, langchain.txt, etc.)\n- `.env.local` - API keys
 
 ### `app/` Directory (Next.js App Router)
 This contains the main application pages and API routes:
@@ -29,7 +22,7 @@ This contains the main application pages and API routes:
 - `layout.tsx` - Global layout component wrapping the entire app
 - `globals.css` - Global CSS styles including Tailwind imports
 - `api/` subfolder (backend API endpoints):
-  - Handles document CRUD, AI completions, model info, and balance tracking
+  - Handles document CRUD, AI completions, model info, balance tracking, and prompts management
 
 ### `components/` Directory
 - `TiptapEditor.tsx` - Core editor component using TipTap with AI completion features
@@ -37,7 +30,7 @@ This contains the main application pages and API routes:
 ### `lib/` Directory (Utility and Configuration)
 - `completion-mark.ts` - Custom TipTap extension for handling AI completion marks/suggestions
 - `model-config.ts` - Configuration for available AI models and their settings
-- `saved-completion.ts` - Handles saving and retrieving AI completion states
+- `saved-completion.ts` - TipTap node for savable AI snippets (★ icon)
 - `db.ts` - Database connection and query logic using better-sqlite3
 
 ### `docs/` Directory (Documentation and Notes)
@@ -49,35 +42,12 @@ Contains text files documenting key integrations:
 
 ### `public/` Directory (Static Assets)
 - `favicon.ico` - App favicon
-- `globals.css` - Wait, this seems misplaced; probably styles should be in app/
-- Various SVG assets (next.svg, vercel.svg, etc.)
 
-## Architecture Overview
+- SVG assets: file.svg, next.svg, vercel.svg, window.svg, globe.svg
 
-### Frontend Architecture
-The app follows Next.js App Router structure with client-side components:
-- Main page renders the TiptapEditor component
-- Editor uses TipTap with custom extensions for AI text marking
-- Client-side state management for completion suggestions and document content
-- Auto-saving to local SQLite database with debouncing
+## Architecture Overview\n\n### Core Data Flow\n```\nUser types → Editor detects Tab → Extract context → POST /api/autocomplete → LangChain + OpenRouter → Ghost text inserted (CompletionMark) → Word selection (arrows/Space) → Confirm (Tab/Enter) → Persist JSON to /api/doc → SQLite\n\nRegen: Tab (no sel) → Add to attempts → Regen prompt template → New ghost text\nSave: Enter → SavedCompletion node → Click ★ to preview\n```\n\n### Frontend Logic (app/page.tsx + components/TiptapEditor.tsx)\n- Single infinite doc ('infinite-doc-v1') loaded/saved via debounced fetch to /api/doc\n- TipTap editor w/ extensions: StarterKit, CompletionMark (ghost styling/selectable), SavedCompletion (★ snippets)\n- State: completion (words, selected), attempts, model, prompts, balance/pricing (fetched on mount)\n- Keyboard: Tab (gen/confirm/regen), →/← select, Space all, Esc cancel, Enter save\n\n### Backend Logic (app/api/)\n- `/api/doc`: CRUD JSON docs in SQLite (better-sqlite3 singleton)\n- `/api/autocomplete`: LangChain ChatOpenAI (OpenRouter) → system+user msg → extract completion+usage\n- `/api/prompts`: Persist/load customPrompt & regenPromptTemplate in settings table\n- `/api/models`, `/api/balance`: Fetch from OpenRouter
 
-### Backend Architecture (API Routes in app/api/)
-- **Document Management** (`/api/doc`): GET/POST for saving and retrieving documents
-- **AI Completions** (`/api/autocomplete`): POST endpoint for generating text completions using LangChain
-- **Model Info** (`/api/models`): GET endpoint for available AI models and pricing
-- **Account Balance** (`/api/balance`): GET endpoint for tracking OpenRouter credits
-
-### AI Integration Flow
-1. User types in the editor trigger completion requests
-2. Frontend sends current document context to `/api/autocomplete`
-3. Backend uses LangChain with specified model to generate completions
-4. Completions are returned and displayed as selectable words in the editor
-5. User can navigate word-by-word using keyboard shortcuts (Tab, Space, arrows)
-
-### Data Persistence
-- Documents stored locally in SQLite database (`data.db`)
-- Auto-saving functionality ensures minimal data loss
-- API endpoints handle document CRUD operations
+### Custom Extensions\n- **CompletionMark** (mark): Applies 'completion-ghost' class for styling unselected AI text; split/unset for selection visualization\n- **SavedCompletion** (node): Inline ★ icon w/ data-content; click shows popup preview
 
 ## Key Features Implemented
 
@@ -115,4 +85,4 @@ The app follows Next.js App Router structure with client-side components:
 - Static assets served from `/public`
 - API routes compiled into serverless handlers
 
-This overview should provide a complete understanding of the Helm project structure, flow, and implementation details for anyone diving into the codebase.
+## Design Decisions\n- **Word-by-word selection**: Precise control over AI suggestions, avoiding full-paragraph commits\n- **Infinite single doc**: Simplifies UX/persistence; auto-backups in dataBackup/\n- **Local SQLite**: Offline-first, privacy (no cloud sync), fast sync queries\n- **Regen w/ attempts**: Template prevents repetitive generations via history\n- **Debounced saves**: Balances real-time UX w/ perf (1s throttle)\n- **OpenRouter**: Model agnostic, cost tracking, multi-provider\n\nThis overview provides complete structure, logic flows, and rationale.

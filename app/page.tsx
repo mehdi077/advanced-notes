@@ -3,12 +3,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { debounce } from 'lodash';
 import TiptapEditor from '../components/TiptapEditor';
-import { ArrowDown } from 'lucide-react';
+import VoiceChat from '../components/VoiceChat';
+import { ArrowDown, AudioWaveform } from 'lucide-react';
+import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 
 export default function Home() {
   const [content, setContent] = useState<object | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const DOC_ID = 'infinite-doc-v1';
+  const { setIsModalOpen } = useVoiceStore();
 
   useEffect(() => {
     // Load from API on mount
@@ -68,7 +71,7 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen w-full bg-black text-white">
+    <main className="min-h-screen w-full bg-black text-white relative">
       <div className="container mx-auto px-4 py-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-4">
           <h1 className="text-2xl text-gray-400">Infinite Document</h1>
@@ -83,6 +86,22 @@ export default function Home() {
         </div>
         <TiptapEditor initialContent={content} onContentUpdate={handleUpdate} />
       </div>
+
+      {/* Floating Voice Button - positioned above editor content */}
+      <button
+        onClick={() => setIsModalOpen(true)}
+        className="fixed bottom-6 right-6 md:bottom-8 md:right-8 w-14 h-14 md:w-16 md:h-16 rounded-full bg-gradient-to-br from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600 shadow-lg hover:shadow-purple-500/50 transition-all duration-300 hover:scale-110 active:scale-95 z-[35] flex items-center justify-center group"
+        title="Open Voice Assistant"
+      >
+        {/* Pulsing effect */}
+        <span className="absolute inset-0 rounded-full bg-purple-500 opacity-75 animate-ping" />
+        
+        {/* Icon */}
+        <AudioWaveform size={24} className="relative z-10 text-white group-hover:scale-110 transition-transform" />
+      </button>
+
+      {/* Voice Chat Modal */}
+      <VoiceChat />
     </main>
   );
 }
