@@ -1,0 +1,962 @@
+# Framer Motion
+
+Framer Motion is a production-ready animation library for React that provides a simple, declarative API for creating fluid animations and gestures. Built by Framer, it powers complex animations with minimal code through its intuitive motion component wrapper system. The library handles everything from basic transitions to advanced layout animations, gesture detection, scroll-based animations, and exit animations with hardware acceleration and optimized performance.
+
+The library's architecture centers around the `motion` component factory that wraps standard HTML and SVG elements, enabling them to be animated through props. It includes a comprehensive motion value system for tracking animation state independently of React's render cycle, gesture recognizers for drag/hover/tap interactions, a projection system for automatic layout animations, and specialized components like AnimatePresence for exit animations. The codebase is organized into distinct modules for rendering, animation generation, gesture handling, and value transformation, making it highly extensible and tree-shakeable.
+
+## Installation and Basic Setup
+
+```bash
+npm install framer-motion
+```
+
+```jsx
+import { motion } from "framer-motion"
+
+export const MyComponent = ({ isVisible }) => (
+    <motion.div animate={{ opacity: isVisible ? 1 : 0 }} />
+)
+```
+
+## motion Component - Basic Animations
+
+Simple declarative animations using the motion wrapper around HTML elements.
+
+```jsx
+import { motion } from "framer-motion"
+import { useState, useEffect } from "react"
+
+const style = {
+    width: 100,
+    height: 100,
+    background: "white",
+}
+
+export const AnimationExample = () => {
+    const [state, setState] = useState(false)
+
+    useEffect(() => {
+        setTimeout(() => setState(true), 300)
+    }, [])
+
+    return (
+        <motion.div
+            animate={{ x: state ? 100 : 0, opacity: state ? 1 : 0.5 }}
+            transition={{ duration: 1, type: "spring" }}
+            style={style}
+        />
+    )
+}
+```
+
+## AnimatePresence - Exit Animations
+
+Component that enables exit animations for elements being removed from the React tree.
+
+```jsx
+import { motion, AnimatePresence } from "framer-motion"
+import { useState } from "react"
+
+const style = {
+    width: 100,
+    height: 100,
+    background: "red",
+    opacity: 1,
+}
+
+export const ExitAnimationExample = () => {
+    const [isVisible, setVisible] = useState(true)
+
+    return (
+        <div onClick={() => setVisible(!isVisible)}>
+            <AnimatePresence
+                initial={false}
+                onExitComplete={() => console.log("Animation completed")}
+            >
+                {isVisible && (
+                    <motion.div
+                        key="animated-element"
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.8 }}
+                        transition={{ duration: 0.3 }}
+                        style={style}
+                    />
+                )}
+            </AnimatePresence>
+        </div>
+    )
+}
+```
+
+## AnimatePresence - Component Switching
+
+Animating between different components using key changes.
+
+```jsx
+import { motion, AnimatePresence } from "framer-motion"
+import { useState } from "react"
+
+const style = {
+    width: 100,
+    height: 100,
+    opacity: 1,
+}
+
+export const SwitchExample = () => {
+    const [key, setKey] = useState("a")
+
+    return (
+        <div onClick={() => setKey(key === "a" ? "b" : "a")}>
+            <AnimatePresence
+                initial={false}
+                onExitComplete={() => console.log("Switch complete")}
+            >
+                <motion.div
+                    key={key}
+                    initial={{ opacity: 0, x: -100 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 100 }}
+                    transition={{ duration: 0.5 }}
+                    style={{
+                        ...style,
+                        background: key === "a" ? "green" : "blue",
+                    }}
+                />
+            </AnimatePresence>
+        </div>
+    )
+}
+```
+
+## Variants - Animation Orchestration
+
+Define reusable animation states and orchestrate animations across component trees.
+
+```jsx
+import { motion, useMotionValue } from "framer-motion"
+import { Fragment, useState } from "react"
+
+const MotionFragment = motion(Fragment)
+
+const box = {
+    width: 100,
+    height: 100,
+}
+
+const variants = {
+    initial: {
+        backgroundColor: "#f00",
+        scale: 1,
+    },
+    active: {
+        backgroundColor: "#00f",
+        scale: 1.2,
+        transition: {
+            duration: 0.5,
+            type: "spring",
+        }
+    },
+}
+
+export const VariantsExample = () => {
+    const backgroundColor = useMotionValue("#f00")
+    const [isActive, setIsActive] = useState(false)
+
+    return (
+        <MotionFragment initial="initial" animate={isActive ? "active" : "initial"}>
+            <motion.div>
+                <motion.div
+                    variants={variants}
+                    onClick={() => setIsActive(!isActive)}
+                    style={{ ...box, backgroundColor }}
+                />
+            </motion.div>
+        </MotionFragment>
+    )
+}
+```
+
+## Gestures - Drag, Hover, and Tap
+
+Handle user interactions with built-in gesture recognizers and event handlers.
+
+```jsx
+import { useState } from "react"
+import { motion } from "framer-motion"
+
+const styleA = {
+    width: 200,
+    height: 200,
+    background: "white",
+    borderRadius: 20,
+}
+
+export const GestureExample = () => {
+    const [isTap, setTap] = useState(false)
+    const [isDrag, setDrag] = useState(false)
+    const [isHover, setHover] = useState(false)
+    const [dragCount, setDragCount] = useState(0)
+
+    return (
+        <motion.div
+            drag
+            dragConstraints={{ left: 0, right: 100, top: 0, bottom: 100 }}
+            dragElastic={0}
+            whileTap={{ scale: 0.95 }}
+            whileHover={{ scale: 1.05 }}
+            onTap={() => setTap(false)}
+            onTapStart={() => setTap(true)}
+            onTapCancel={() => setTap(false)}
+            onDrag={() => setDragCount(dragCount + 1)}
+            onDragStart={() => setDrag(true)}
+            onDragEnd={() => setDrag(false)}
+            onHoverStart={() => {
+                console.log("hover start")
+                setHover(true)
+            }}
+            onHoverEnd={() => {
+                console.log("hover end")
+                setHover(false)
+            }}
+            style={styleA}
+        />
+    )
+}
+```
+
+## whileHover - Hover State Animations
+
+Animate elements on hover with spring physics configuration.
+
+```jsx
+import { useState } from "react"
+import { motion } from "framer-motion"
+
+export const HoverExample = () => {
+    const [scale, setScale] = useState(2)
+
+    return (
+        <motion.div
+            whileHover={{
+                opacity: 0.5,
+                scale: 1.1,
+            }}
+            onClick={() => setScale(scale + 1)}
+            style={{ width: 100, height: 100, background: "white" }}
+            transition={{
+                type: "spring",
+                mass: 1,
+                damping: 10,
+                stiffness: 60,
+                restDelta: 0.00001,
+                restSpeed: 0.00001,
+            }}
+        />
+    )
+}
+```
+
+## animate() Function - Standalone Animations
+
+Imperative animation API that works without React components.
+
+```jsx
+import { animate, motionValue } from "framer-motion"
+import { useEffect } from "react"
+
+export const StandaloneAnimationExample = () => {
+    useEffect(() => {
+        // Animate DOM elements directly
+        animate("div.animated", { opacity: 0, x: 100 }, { duration: 2 })
+
+        // Animate motion values
+        const x = motionValue(0)
+        animate(x, 200, {
+            duration: 0.5,
+            onUpdate: (latest) => console.log("x:", latest),
+            onComplete: () => console.log("Animation complete")
+        })
+
+        // Animate numeric values
+        animate(0, 100, {
+            duration: 2,
+            onUpdate: (v) => console.log("Value:", v)
+        })
+
+        // Animate sequences
+        const a = motionValue(0)
+        animate([
+            [a, 100, { duration: 1 }],
+            [a, 0, { duration: 1 }],
+        ], {
+            defaultTransition: { ease: "linear" }
+        }).then(() => console.log("Sequence complete"))
+    }, [])
+
+    return <div className="animated">Animating element</div>
+}
+```
+
+## useMotionValue - Performance-Optimized Values
+
+Track animated values outside React's render cycle for optimal performance.
+
+```jsx
+import { motion, useMotionValue, useTransform } from "framer-motion"
+import { useEffect } from "react"
+
+export const MotionValueExample = () => {
+    const x = useMotionValue(0)
+    const opacity = useTransform(x, [-100, 0, 100], [0, 1, 0])
+    const scale = useTransform(x, [-100, 0, 100], [0.5, 1, 0.5])
+
+    useEffect(() => {
+        const unsubscribe = x.on("change", (latest) => {
+            console.log("x changed:", latest)
+        })
+
+        const unsubscribeVelocity = x.on("velocityChange", (latest) => {
+            console.log("velocity:", latest)
+        })
+
+        return () => {
+            unsubscribe()
+            unsubscribeVelocity()
+        }
+    }, [x])
+
+    return (
+        <motion.div
+            drag="x"
+            dragConstraints={{ left: -100, right: 100 }}
+            style={{
+                x,
+                opacity,
+                scale,
+                width: 100,
+                height: 100,
+                background: "white"
+            }}
+        />
+    )
+}
+```
+
+## useSpring - Spring Physics for Smooth Animations
+
+Create spring-animated motion values that automatically animate when source values change.
+
+```jsx
+import { motion, useMotionValue, useSpring } from "framer-motion"
+import { useRef } from "react"
+
+const spring = {
+    stiffness: 300,
+    damping: 28,
+    restDelta: 0.00001,
+    restSpeed: 0.00001,
+}
+
+export const SpringExample = () => {
+    const xPoint = useMotionValue(0)
+    const yPoint = useMotionValue(0)
+    const x = useSpring(xPoint, spring)
+    const y = useSpring(yPoint, spring)
+    const ref = useRef(null)
+
+    const onMove = ({ clientX, clientY }) => {
+        const element = ref.current
+        if (!element) return
+
+        x.set(clientX - element.offsetLeft - element.offsetWidth / 2)
+        y.set(clientY - element.offsetTop - element.offsetHeight / 2)
+    }
+
+    function startPointer() {
+        window.addEventListener("pointermove", onMove)
+    }
+
+    function cancelPointer() {
+        window.removeEventListener("pointermove", onMove)
+    }
+
+    return (
+        <motion.div
+            ref={ref}
+            style={{ width: 100, height: 100, background: "yellow", x, y }}
+            onTapStart={startPointer}
+            onTapCancel={cancelPointer}
+            onTap={cancelPointer}
+        >
+            Spring Cursor
+        </motion.div>
+    )
+}
+```
+
+## useScroll - Scroll-Linked Animations
+
+Track scroll progress and create scroll-driven animations with spring smoothing.
+
+```jsx
+import { motion, useElementScroll, useSpring, useTransform } from "framer-motion"
+import { useRef, useState } from "react"
+
+const ContentPlaceholder = () => (
+    <div style={{ height: "200vh", padding: 20 }}>
+        <h1>Scroll down to see the progress bar</h1>
+        {Array.from({ length: 50 }).map((_, i) => (
+            <p key={i}>Lorem ipsum dolor sit amet...</p>
+        ))}
+    </div>
+)
+
+export const ScrollExample = () => {
+    const [isComplete, setIsComplete] = useState(false)
+    const containerRef = useRef(null)
+    const { scrollYProgress } = useElementScroll(containerRef)
+
+    const scaleX = useSpring(scrollYProgress, {
+        stiffness: 100,
+        damping: 30,
+        restDelta: 0.001,
+        restSpeed: 0.001,
+    })
+
+    const pathLength = useTransform(scrollYProgress, [0, 0.9], [0, 1])
+
+    return (
+        <div
+            ref={containerRef}
+            style={{
+                overflow: "scroll",
+                height: "100vh",
+                position: "relative",
+            }}
+        >
+            <motion.div
+                style={{
+                    position: "fixed",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: 10,
+                    background: "white",
+                    scaleX,
+                    transformOrigin: "0% 0%",
+                }}
+            />
+            <ContentPlaceholder />
+            <svg className="progress-icon" viewBox="0 0 60 60" style={{
+                position: "fixed",
+                top: 20,
+                left: 20,
+                width: 120,
+                height: 120,
+            }}>
+                <motion.path
+                    fill="none"
+                    strokeWidth="5"
+                    stroke="white"
+                    d="M 0, 20 a 20, 20 0 1,0 40,0 a 20, 20 0 1,0 -40,0"
+                    style={{ pathLength, rotate: 90 }}
+                />
+            </svg>
+        </div>
+    )
+}
+```
+
+## Layout Animations - Automatic Layout Transitions
+
+Automatically animate layout changes including size, position, and scale with scale correction for children.
+
+```jsx
+import { motion } from "framer-motion"
+import { useState, useEffect } from "react"
+import styled from "styled-components"
+
+const transition = { duration: 1, type: "spring" }
+
+export const LayoutExample = () => {
+    const [isOn, setIsOn] = useState(false)
+
+    useEffect(() => {
+        isOn && setTimeout(() => setIsOn(isOn), 500)
+    }, [isOn])
+
+    return (
+        <Box
+            layout
+            isOn={isOn}
+            onClick={() => setIsOn(!isOn)}
+            transition={transition}
+        >
+            <motion.div>
+                <JitterBox layout transition={transition} />
+            </motion.div>
+        </Box>
+    )
+}
+
+const Box = styled(motion.div)`
+    background: white;
+    width: ${({ isOn }) => (isOn ? "500px" : "200px")};
+    height: ${({ isOn }) => (isOn ? "500px" : "200px")};
+    display: flex;
+    justify-content: center;
+    align-items: center;
+`
+
+const JitterBox = styled(motion.div)`
+    background: red;
+    width: 100px;
+    height: 100px;
+`
+```
+
+## useAnimate - Scoped Imperative Animations
+
+Create scoped animation functions with automatic cleanup for imperative animation control.
+
+```jsx
+import { useAnimate, stagger } from "framer-motion"
+import { useEffect } from "react"
+
+export const UseAnimateExample = () => {
+    const [scope, animate] = useAnimate()
+
+    useEffect(() => {
+        // Animate multiple elements in sequence
+        const animation = async () => {
+            await animate(
+                ".box",
+                { scale: 1.2, rotate: 90 },
+                { duration: 0.5, delay: stagger(0.1) }
+            )
+
+            await animate(
+                ".box",
+                { scale: 1, rotate: 0 },
+                { duration: 0.5 }
+            )
+        }
+
+        animation()
+    }, [animate])
+
+    return (
+        <div ref={scope}>
+            <div className="box" style={{ width: 100, height: 100, background: "red" }} />
+            <div className="box" style={{ width: 100, height: 100, background: "blue" }} />
+            <div className="box" style={{ width: 100, height: 100, background: "green" }} />
+        </div>
+    )
+}
+```
+
+## useAnimationControls - Manual Animation Control
+
+Create animation controls for programmatic animation triggering across components.
+
+```jsx
+import { motion, useAnimationControls } from "framer-motion"
+import { useState } from "react"
+
+export const AnimationControlsExample = () => {
+    const controls = useAnimationControls()
+    const [count, setCount] = useState(0)
+
+    const handleAnimate = async () => {
+        await controls.start({
+            scale: 1.5,
+            rotate: 180,
+            transition: { duration: 0.5 }
+        })
+
+        await controls.start({
+            scale: 1,
+            rotate: 0,
+            transition: { duration: 0.5 }
+        })
+
+        setCount(count + 1)
+    }
+
+    const handleStop = () => {
+        controls.stop()
+    }
+
+    return (
+        <div>
+            <motion.div
+                animate={controls}
+                style={{
+                    width: 100,
+                    height: 100,
+                    background: "purple",
+                    margin: 20
+                }}
+            />
+            <button onClick={handleAnimate}>Animate (count: {count})</button>
+            <button onClick={handleStop}>Stop</button>
+        </div>
+    )
+}
+```
+
+## useDragControls - Custom Drag Handles
+
+Programmatically control drag operations with custom drag handles.
+
+```jsx
+import { motion, useDragControls } from "framer-motion"
+import { useRef } from "react"
+
+export const DragControlsExample = () => {
+    const dragControls = useDragControls()
+    const constraintsRef = useRef(null)
+
+    function startDrag(event) {
+        dragControls.start(event, { snapToCursor: true })
+    }
+
+    return (
+        <div ref={constraintsRef} style={{
+            width: "100vw",
+            height: "100vh",
+            position: "relative"
+        }}>
+            <motion.div
+                drag
+                dragControls={dragControls}
+                dragConstraints={constraintsRef}
+                dragElastic={0.5}
+                style={{
+                    width: 200,
+                    height: 200,
+                    background: "white",
+                    borderRadius: 10,
+                    cursor: "auto"
+                }}
+            >
+                <div
+                    onPointerDown={startDrag}
+                    style={{
+                        width: "100%",
+                        height: 40,
+                        background: "rgba(0,0,0,0.2)",
+                        borderRadius: "10px 10px 0 0",
+                        cursor: "grab",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                    }}
+                >
+                    Drag Handle
+                </div>
+                <div style={{ padding: 20 }}>
+                    Content area (not draggable)
+                </div>
+            </motion.div>
+        </div>
+    )
+}
+```
+
+## MotionConfig - Global Animation Configuration
+
+Set default animation configuration for all child motion components.
+
+```jsx
+import { motion, MotionConfig } from "framer-motion"
+import { useState } from "react"
+
+export const MotionConfigExample = () => {
+    const [reducedMotion, setReducedMotion] = useState(false)
+
+    return (
+        <MotionConfig
+            transition={{
+                type: "spring",
+                stiffness: 300,
+                damping: 30
+            }}
+            reducedMotion={reducedMotion ? "always" : "never"}
+        >
+            <div>
+                <motion.div
+                    animate={{ x: 100 }}
+                    style={{ width: 100, height: 100, background: "red" }}
+                />
+                <motion.div
+                    animate={{ y: 100 }}
+                    style={{ width: 100, height: 100, background: "blue" }}
+                />
+                <button onClick={() => setReducedMotion(!reducedMotion)}>
+                    Toggle Reduced Motion: {reducedMotion ? "ON" : "OFF"}
+                </button>
+            </div>
+        </MotionConfig>
+    )
+}
+```
+
+## LazyMotion - Code Splitting and Bundle Size Optimization
+
+Reduce bundle size by loading animation features on demand.
+
+```jsx
+import { LazyMotion, domAnimation, m } from "framer-motion"
+import { useState } from "react"
+
+// Use 'm' instead of 'motion' for minimal bundle
+export const LazyMotionExample = () => {
+    const [isVisible, setIsVisible] = useState(true)
+
+    return (
+        <LazyMotion features={domAnimation} strict>
+            <m.div
+                animate={{
+                    opacity: isVisible ? 1 : 0,
+                    scale: isVisible ? 1 : 0.8
+                }}
+                transition={{ duration: 0.5 }}
+                style={{ width: 100, height: 100, background: "green" }}
+                onClick={() => setIsVisible(!isVisible)}
+            />
+        </LazyMotion>
+    )
+}
+```
+
+## useInView - Viewport Scroll Triggers
+
+Trigger animations when elements enter or leave the viewport.
+
+```jsx
+import { motion, useInView } from "framer-motion"
+import { useRef } from "react"
+
+export const InViewExample = () => {
+    const ref = useRef(null)
+    const isInView = useInView(ref, {
+        once: false,
+        margin: "-100px",
+        amount: 0.5
+    })
+
+    return (
+        <div style={{ height: "200vh" }}>
+            <div style={{ height: "100vh" }}>Scroll down</div>
+            <motion.div
+                ref={ref}
+                initial={{ opacity: 0, y: 100 }}
+                animate={isInView ? { opacity: 1, y: 0 } : { opacity: 0, y: 100 }}
+                transition={{ duration: 0.8 }}
+                style={{
+                    width: 200,
+                    height: 200,
+                    background: "orange",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center"
+                }}
+            >
+                {isInView ? "In View!" : "Not in view"}
+            </motion.div>
+        </div>
+    )
+}
+```
+
+## Reorder Component - Drag-to-Reorder Lists
+
+Create reorderable lists with drag-and-drop functionality.
+
+```jsx
+import { Reorder } from "framer-motion"
+import { useState } from "react"
+
+export const ReorderExample = () => {
+    const [items, setItems] = useState([
+        { id: 1, text: "Item 1", color: "#f00" },
+        { id: 2, text: "Item 2", color: "#0f0" },
+        { id: 3, text: "Item 3", color: "#00f" },
+        { id: 4, text: "Item 4", color: "#ff0" },
+    ])
+
+    return (
+        <Reorder.Group
+            axis="y"
+            values={items}
+            onReorder={setItems}
+            style={{ listStyle: "none", padding: 0 }}
+        >
+            {items.map((item) => (
+                <Reorder.Item
+                    key={item.id}
+                    value={item}
+                    style={{
+                        background: item.color,
+                        padding: 20,
+                        margin: 10,
+                        borderRadius: 10,
+                        cursor: "grab",
+                    }}
+                    whileDrag={{
+                        scale: 1.05,
+                        cursor: "grabbing",
+                        boxShadow: "0px 5px 15px rgba(0,0,0,0.3)"
+                    }}
+                >
+                    {item.text}
+                </Reorder.Item>
+            ))}
+        </Reorder.Group>
+    )
+}
+```
+
+## SVG Path Animations - Drawing Effects
+
+Animate SVG paths for drawing effects and morphing animations.
+
+```jsx
+import { motion } from "framer-motion"
+
+export const SVGPathExample = () => {
+    return (
+        <svg width="200" height="200" viewBox="0 0 200 200">
+            <motion.circle
+                cx="100"
+                cy="100"
+                r="80"
+                stroke="#fff"
+                strokeWidth="4"
+                fill="none"
+                initial={{ pathLength: 0, opacity: 0 }}
+                animate={{ pathLength: 1, opacity: 1 }}
+                transition={{
+                    duration: 2,
+                    ease: "easeInOut",
+                    repeat: Infinity,
+                    repeatType: "reverse"
+                }}
+            />
+            <motion.path
+                d="M 50,100 L 90,140 L 150,60"
+                stroke="#fff"
+                strokeWidth="8"
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                initial={{ pathLength: 0 }}
+                animate={{ pathLength: 1 }}
+                transition={{
+                    duration: 1.5,
+                    delay: 0.5,
+                    ease: "easeOut"
+                }}
+            />
+        </svg>
+    )
+}
+```
+
+## CSS Variables Integration
+
+Animate CSS variables for dynamic theming and complex effects.
+
+```jsx
+import { motion } from "framer-motion"
+import { useState } from "react"
+
+export const CSSVariablesExample = () => {
+    const [hue, setHue] = useState(0)
+
+    return (
+        <>
+            <style>{`
+                .gradient-box {
+                    width: 200px;
+                    height: 200px;
+                    background: linear-gradient(
+                        45deg,
+                        hsl(var(--hue), 100%, 50%),
+                        hsl(calc(var(--hue) + 60), 100%, 50%)
+                    );
+                }
+            `}</style>
+            <motion.div
+                className="gradient-box"
+                animate={{ "--hue": hue }}
+                transition={{ duration: 1 }}
+                onClick={() => setHue((hue + 60) % 360)}
+                style={{
+                    "--hue": 0,
+                    borderRadius: 20,
+                    cursor: "pointer"
+                }}
+            />
+        </>
+    )
+}
+```
+
+## Stagger Children - Orchestrated Animations
+
+Animate multiple children in sequence with stagger delays.
+
+```jsx
+import { motion } from "framer-motion"
+
+const container = {
+    hidden: { opacity: 0 },
+    show: {
+        opacity: 1,
+        transition: {
+            staggerChildren: 0.1,
+            delayChildren: 0.3,
+        }
+    }
+}
+
+const item = {
+    hidden: { opacity: 0, y: 20 },
+    show: { opacity: 1, y: 0 }
+}
+
+export const StaggerExample = () => {
+    return (
+        <motion.ul
+            variants={container}
+            initial="hidden"
+            animate="show"
+            style={{ listStyle: "none", padding: 0 }}
+        >
+            {[1, 2, 3, 4, 5].map((i) => (
+                <motion.li
+                    key={i}
+                    variants={item}
+                    style={{
+                        padding: 20,
+                        margin: 10,
+                        background: "white",
+                        borderRadius: 10
+                    }}
+                >
+                    Item {i}
+                </motion.li>
+            ))}
+        </motion.ul>
+    )
+}
+```
+
+## Summary
+
+Framer Motion is primarily used for creating rich, interactive user interfaces with fluid animations in React applications. Common use cases include page transitions, loading states, interactive UI elements (buttons, cards, modals), scroll-based animations, drag-and-drop interfaces, data visualization animations, and micro-interactions that enhance user experience. The library excels at layout animations where elements need to smoothly transition between different sizes or positions, exit animations when components unmount, and gesture-based interactions like swipeable carousels or draggable components.
+
+Integration patterns typically involve wrapping HTML elements with the motion component for declarative animations through props, using motion values for performance-critical animations that bypass React renders, implementing AnimatePresence for route transitions or conditional rendering with exit animations, and combining variants with orchestration for complex coordinated animations. Advanced patterns include using LazyMotion for code splitting in production builds, MotionConfig for consistent animation behavior across large applications, layout groups for shared element transitions, and the standalone animate function for animations outside React contexts. The library integrates seamlessly with React's component lifecycle, supports TypeScript out of the box, and provides extensive customization through spring physics, easing functions, and custom animation generators.

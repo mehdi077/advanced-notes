@@ -137,29 +137,30 @@ export default function VoiceChat() {
     startOnLoad: false,
     baseAssetPath: "/",
     onnxWASMBasePath: "/",
+    positiveSpeechThreshold: 0.5,
+    negativeSpeechThreshold: 0.35,
+    redemptionFrames: 8,
+    preSpeechPadFrames: 1,
+    minSpeechFrames: 3,
     onSpeechStart: () => {
-      if (status === 'listening') {
-        console.log('User started speaking...');
-      }
+      console.log('🎤 VAD: Speech started');
     },
     onSpeechEnd: (audio) => {
-      if (status !== 'listening') return;
+      console.log('🎤 VAD: Speech ended, audio length:', audio.length);
+      if (status !== 'listening') {
+        console.log('⚠️ Ignoring speech end - not in listening state, current status:', status);
+        return;
+      }
 
-      console.log('Speech ended, processing...');
+      console.log('✅ Processing speech...');
       vad.pause();
       
       const wavBlob = float32ToWav(audio);
+      console.log('📦 WAV blob created, size:', wavBlob.size);
       processAudio(wavBlob);
     },
     onVADMisfire: () => {
-      console.log('VAD misfire (noise detected)');
-    },
-    onLoadComplete: () => {
-      console.log('VAD loaded successfully');
-    },
-    onError: (error) => {
-      console.error('VAD error:', error);
-      setPermissionError('Failed to initialize voice detection: ' + error.message);
+      console.log('⚠️ VAD misfire (noise detected)');
     },
   });
 
@@ -228,10 +229,12 @@ export default function VoiceChat() {
           await new Promise(resolve => setTimeout(resolve, 300));
         }
         
+        console.log('🎬 Starting VAD...');
         vad.start();
         setIsListening(true);
         setStatus('listening');
-        console.log('Session started - Speak now!');
+        console.log('✅ VAD started - Listening for speech...');
+        console.log('📊 VAD state - loading:', vad.loading, 'listening:', vad.listening, 'errored:', vad.errored);
       } catch (err: any) {
         console.error("Microphone access error:", err);
         
@@ -337,7 +340,11 @@ export default function VoiceChat() {
             
             {/* Visualizer section */}
             <div className="relative flex flex-col items-center justify-center md:flex-1 min-w-0 py-4">
-              <SimpleVisualizer status={status} />
+              <SimpleVisualizer 
+                status={status} 
+                stream={stream}
+                audioElement={audioRef.current}
+              />
 
               {/* Start button */}
               {status === 'idle' && (
