@@ -90,14 +90,10 @@ export default function Home() {
       {/* Floating Voice Button - positioned above editor content */}
       <button
         onClick={() => setIsModalOpen(true)}
-        className="fixed bottom-6 right-6 md:bottom-8 md:right-8 w-14 h-14 md:w-16 md:h-16 rounded-full bg-gradient-to-br from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600 shadow-lg hover:shadow-purple-500/50 transition-all duration-300 hover:scale-110 active:scale-95 z-[35] flex items-center justify-center group"
+        className="fixed bottom-6 right-6 md:bottom-8 md:right-8 w-14 h-14 md:w-16 md:h-16 rounded-full bg-purple-600 hover:bg-purple-700 shadow-lg transition-colors z-[35] flex items-center justify-center"
         title="Open Voice Assistant"
       >
-        {/* Pulsing effect */}
-        <span className="absolute inset-0 rounded-full bg-purple-500 opacity-75 animate-ping" />
-        
-        {/* Icon */}
-        <AudioWaveform size={24} className="relative z-10 text-white group-hover:scale-110 transition-transform" />
+        <AudioWaveform size={24} className="text-white" />
       </button>
 
       {/* Voice Chat Modal */}

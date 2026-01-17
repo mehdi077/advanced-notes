@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useMicVAD } from '@ricky0123/vad-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { float32ToWav } from '@/utils/audio';
-import ShapeMorph from '@/components/ShapeMorph';
+import SimpleVisualizer from '@/components/SimpleVisualizer';
 import { X } from 'lucide-react';
 
 export default function VoiceChat() {
@@ -22,7 +22,6 @@ export default function VoiceChat() {
     clearConversation,
   } = useVoiceStore();
 
-  const [stream, setStream] = useState<MediaStream | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [audioContextUnlocked, setAudioContextUnlocked] = useState(false);
@@ -161,18 +160,13 @@ export default function VoiceChat() {
     vad.pause();
     setIsListening(false);
     
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
-    }
-    
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
     }
     setIsPlayingAudio(false);
     setStatus('idle');
-  }, [vad, stream, setIsListening, setStatus, setIsPlayingAudio]);
+  }, [vad, setIsListening, setStatus, setIsPlayingAudio]);
 
   // Start/Stop Session
   const toggleSession = useCallback(async () => {
@@ -181,58 +175,18 @@ export default function VoiceChat() {
     } else {
       try {
         setPermissionError(null);
-        
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          throw new Error('Your browser does not support microphone access.');
-        }
-        
         unlockAudio();
         
-        const constraints: MediaStreamConstraints = {
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            sampleRate: { ideal: 16000 },
-          }
-        };
-        
-        const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-        
-        const audioTracks = mediaStream.getAudioTracks();
-        if (audioTracks.length === 0) {
-          throw new Error('No audio track available.');
-        }
-        
-        setStream(mediaStream);
-        
-        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-        if (isMobile) {
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
-        
+        // VAD handles its own microphone access
         vad.start();
         setIsListening(true);
         setStatus('listening');
       } catch (err: any) {
-        console.error("Microphone access error:", err);
-        
-        let errorMessage = 'Microphone access failed';
-        
-        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-          errorMessage = 'Microphone permission denied. Please allow microphone access.';
-        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-          errorMessage = 'No microphone found.';
-        } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-          errorMessage = 'Microphone is already in use.';
-        } else if (err.message) {
-          errorMessage = err.message;
-        }
-        
-        setPermissionError(errorMessage);
+        console.error("VAD start error:", err);
+        setPermissionError('Failed to start voice detection. Please check microphone permissions.');
       }
     }
-  }, [isListening, vad, setIsListening, setStatus, stream]);
+  }, [isListening, vad, setIsListening, setStatus]);
 
   // Audio Ended Handler
   const handleAudioEnded = useCallback(() => {
@@ -265,7 +219,7 @@ export default function VoiceChat() {
       
       {/* Modal */}
       <div className="fixed inset-0 z-50 flex items-center justify-center p-2 md:p-4">
-        <div className="relative bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-800 w-full max-w-3xl h-[95vh] md:max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="relative bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-800 w-full max-w-3xl max-h-[70vh] flex flex-col overflow-hidden">
           
           {/* Close button */}
           <button
@@ -299,53 +253,28 @@ export default function VoiceChat() {
           <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
             
             {/* Visualizer section */}
-            <div className="relative flex items-center justify-center md:flex-1 min-w-0 h-64 md:h-auto">
-              <ShapeMorph 
-                status={status}
-                stream={stream}
-                audioElement={audioRef.current}
-                onTap={() => {
-                  if (status === 'idle') {
-                    toggleSession();
-                  } else if (audioUrl && status === 'generating_audio' && !audioContextUnlocked) {
-                    unlockAudio();
-                    if (audioRef.current && audioUrl) {
-                      audioRef.current.src = audioUrl;
-                      audioRef.current.play().then(() => {
-                        setIsPlayingAudio(true);
-                        setStatus('speaking');
-                      });
-                    }
-                  }
-                }}
-              />
+            <div className="relative flex flex-col items-center justify-center md:flex-1 min-w-0 py-4">
+              <SimpleVisualizer status={status} />
 
-              {/* Start button overlay */}
+              {/* Start button */}
               {status === 'idle' && (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <button
-                    onClick={toggleSession}
-                    disabled={isProcessing}
-                    className="px-6 py-3 md:px-8 md:py-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-zinc-700 disabled:cursor-not-allowed rounded-full text-white font-medium text-base md:text-lg shadow-lg transition-all active:scale-95"
-                  >
-                    {isProcessing ? 'Loading...' : 'START'}
-                  </button>
-                </div>
+                <button
+                  onClick={toggleSession}
+                  disabled={isProcessing}
+                  className="mt-4 px-6 py-2.5 md:px-8 md:py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-zinc-700 disabled:cursor-not-allowed rounded-full text-white font-medium text-sm md:text-base shadow-lg transition-colors"
+                >
+                  {isProcessing ? 'Loading...' : 'START'}
+                </button>
               )}
 
               {/* Stop button */}
               {status !== 'idle' && (
-                <div className="absolute bottom-4 md:bottom-8 left-1/2 -translate-x-1/2">
-                  <button
-                    onClick={cancelSession}
-                    className="group relative w-12 h-12 md:w-14 md:h-14 rounded-full transition-all duration-300 active:scale-95"
-                  >
-                    <div className="absolute inset-0 rounded-full bg-red-500/20 blur-xl group-hover:bg-red-500/40 transition-all" />
-                    <div className="relative w-full h-full rounded-full border-2 border-red-500/40 bg-black/20 backdrop-blur-sm flex items-center justify-center group-hover:border-red-500 group-active:bg-red-500/10 transition-all">
-                      <div className="w-4 h-4 md:w-5 md:h-5 rounded-sm bg-red-500 group-hover:scale-110 transition-all" />
-                    </div>
-                  </button>
-                </div>
+                <button
+                  onClick={cancelSession}
+                  className="mt-4 px-6 py-2.5 bg-red-600 hover:bg-red-700 active:bg-red-800 rounded-full text-white font-medium text-sm transition-colors"
+                >
+                  STOP
+                </button>
               )}
             </div>
 
