@@ -6,5 +6,5 @@ next-env.d.ts
 .DS_Store
 data.db
 *.log
-reference-projs
-docs
+reference-projs/
+# docs/

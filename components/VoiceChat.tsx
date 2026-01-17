@@ -132,7 +132,7 @@ export default function VoiceChat() {
     }
   };
 
-  // VAD Hook
+  // VAD Hook with custom stream handler for visualization
   const vad = useMicVAD({
     startOnLoad: false,
     baseAssetPath: "/",
@@ -142,6 +142,22 @@ export default function VoiceChat() {
     redemptionFrames: 8,
     preSpeechPadFrames: 1,
     minSpeechFrames: 3,
+    // Custom stream getter to capture stream for visualization
+    getStream: async () => {
+      console.log('🎤 VAD requesting microphone access...');
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: { ideal: 16000 },
+        }
+      });
+      console.log('✅ Microphone access granted');
+      // Capture stream for visualization
+      setStream(mediaStream);
+      return mediaStream;
+    },
     onSpeechStart: () => {
       console.log('🎤 VAD: Speech started');
     },
@@ -169,9 +185,8 @@ export default function VoiceChat() {
     vad.pause();
     setIsListening(false);
     
-    // Stop stream
+    // Clear stream reference (VAD will handle cleanup internally)
     if (stream) {
-      stream.getTracks().forEach(track => track.stop());
       setStream(null);
     }
     
@@ -191,55 +206,24 @@ export default function VoiceChat() {
       try {
         setPermissionError(null);
         
-        // Check if getUserMedia is available
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          throw new Error('Your browser does not support microphone access. Please use a modern browser.');
-        }
-        
         // Unlock audio context on user interaction
         unlockAudio();
         
-        console.log('Requesting microphone permission...');
+        console.log('🎬 Starting VAD (VAD will handle microphone access)...');
         
-        // Enhanced audio constraints for better mobile compatibility
-        const constraints: MediaStreamConstraints = {
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            sampleRate: { ideal: 16000 },
-          }
-        };
-        
-        // Capture stream first - THIS PROMPTS FOR PERMISSION
-        const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-        
-        // Verify we got an audio track
-        const audioTracks = mediaStream.getAudioTracks();
-        if (audioTracks.length === 0) {
-          throw new Error('No audio track available. Please check your microphone.');
-        }
-        
-        console.log(`Microphone access granted: ${audioTracks[0].label}`);
-        setStream(mediaStream);
-        
-        // Small delay before starting VAD on mobile devices
-        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-        if (isMobile) {
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
-        
-        console.log('🎬 Starting VAD...');
+        // Let VAD handle microphone access internally
+        // The library will prompt for permission and manage the stream
         vad.start();
+        
         setIsListening(true);
         setStatus('listening');
         console.log('✅ VAD started - Listening for speech...');
         console.log('📊 VAD state - loading:', vad.loading, 'listening:', vad.listening, 'errored:', vad.errored);
       } catch (err: any) {
-        console.error("Microphone access error:", err);
+        console.error("VAD start error:", err);
         
         // Provide specific error messages based on error type
-        let errorMessage = 'Microphone access failed';
+        let errorMessage = 'Failed to start voice detection';
         
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
           errorMessage = 'Microphone permission denied. Please allow microphone access in your browser settings.';
@@ -247,21 +231,6 @@ export default function VoiceChat() {
           errorMessage = 'No microphone found. Please connect a microphone and try again.';
         } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
           errorMessage = 'Microphone is already in use by another application.';
-        } else if (err.name === 'OverconstrainedError') {
-          errorMessage = 'Microphone does not meet requirements. Trying with basic settings...';
-          
-          // Retry with basic constraints
-          try {
-            const basicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            setStream(basicStream);
-            vad.start();
-            setIsListening(true);
-            setStatus('listening');
-            console.log('Session started with basic audio settings');
-            return;
-          } catch (retryErr) {
-            errorMessage = 'Failed to access microphone even with basic settings.';
-          }
         } else if (err.name === 'SecurityError') {
           errorMessage = 'Security error: Microphone access requires HTTPS on mobile devices.';
         } else if (err.message) {
@@ -269,9 +238,11 @@ export default function VoiceChat() {
         }
         
         setPermissionError(errorMessage);
+        setStatus('idle');
+        setIsListening(false);
       }
     }
-  }, [isListening, vad, setIsListening, setStatus, stream]);
+  }, [isListening, vad, setIsListening, setStatus]);
 
   // Audio Ended Handler
   const handleAudioEnded = useCallback(() => {
