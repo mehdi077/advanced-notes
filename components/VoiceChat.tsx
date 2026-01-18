@@ -109,19 +109,50 @@ export default function VoiceChat() {
 
       // Setup MediaRecorder
       audioChunksRef.current = [];
+      
+      // Detect supported MIME type
+      let mimeType = 'audio/webm';
+      if (!MediaRecorder.isTypeSupported('audio/webm')) {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          mimeType = 'audio/webm;codecs=opus';
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          mimeType = 'audio/mp4';
+        } else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
+          mimeType = 'audio/ogg;codecs=opus';
+        }
+      }
+      console.log('📼 Using MIME type:', mimeType);
+      
       const mediaRecorder = new MediaRecorder(mediaStream, {
-        mimeType: 'audio/webm',
+        mimeType: mimeType,
       });
 
       mediaRecorder.ondataavailable = (event) => {
+        console.log('📊 Data available:', event.data.size, 'bytes');
         if (event.data.size > 0) {
           audioChunksRef.current.push(event.data);
         }
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        console.log('🎤 Recording stopped, blob size:', audioBlob.size);
+        console.log('🛑 MediaRecorder stopped, chunks:', audioChunksRef.current.length);
+        
+        if (audioChunksRef.current.length === 0) {
+          console.error('❌ No audio data captured');
+          setPermissionError('No audio recorded. Please try again.');
+          setStatus('idle');
+          return;
+        }
+        
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        console.log('🎤 Recording stopped, blob size:', audioBlob.size, 'type:', audioBlob.type);
+        
+        if (audioBlob.size === 0) {
+          console.error('❌ Audio blob is empty');
+          setPermissionError('Recording failed. Please try again.');
+          setStatus('idle');
+          return;
+        }
         
         // Auto-generate immediately after stopping
         setRecordedAudioBlob(audioBlob);
@@ -231,7 +262,10 @@ export default function VoiceChat() {
       };
 
       mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start();
+      
+      // Start recording with timeslice (collect data every 100ms)
+      mediaRecorder.start(100);
+      console.log('🎬 MediaRecorder started with timeslice=100ms');
       
       setStatus('recording');
       setIsListening(true);
