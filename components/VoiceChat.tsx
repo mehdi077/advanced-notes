@@ -128,10 +128,24 @@ export default function VoiceChat() {
       });
 
       mediaRecorder.ondataavailable = (event) => {
-        console.log('📊 Data available:', event.data.size, 'bytes');
-        if (event.data.size > 0) {
+        console.log('📊 Data available event fired! Size:', event.data.size, 'bytes');
+        if (event.data && event.data.size > 0) {
+          console.log('✅ Pushing chunk to array, current length:', audioChunksRef.current.length);
           audioChunksRef.current.push(event.data);
+        } else {
+          console.warn('⚠️ Data available but size is 0 or data is null');
         }
+      };
+      
+      mediaRecorder.onerror = (event) => {
+        console.error('❌ MediaRecorder error:', event);
+        setPermissionError('Recording error occurred');
+        setStatus('idle');
+      };
+      
+      mediaRecorder.onstart = () => {
+        console.log('🎬 MediaRecorder onstart event fired');
+        console.log('📊 MediaRecorder state:', mediaRecorder.state);
       };
 
       mediaRecorder.onstop = async () => {
@@ -304,10 +318,24 @@ export default function VoiceChat() {
   // Stop recording and auto-generate
   const stopRecording = useCallback(() => {
     console.log('🛑 Stopping recording...');
+    console.log('Current chunks before stop:', audioChunksRef.current.length);
     
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      // Note: The onstop handler will set recordedAudioBlob and trigger auto-generation
+      console.log('MediaRecorder state:', mediaRecorderRef.current.state);
+      
+      // Request data before stopping
+      if (mediaRecorderRef.current.state === 'recording') {
+        console.log('Requesting final data...');
+        mediaRecorderRef.current.requestData();
+      }
+      
+      // Stop after a small delay to ensure data is captured
+      setTimeout(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          console.log('Now stopping MediaRecorder...');
+          mediaRecorderRef.current.stop();
+        }
+      }, 100);
     }
     
     if (recordingTimerRef.current) {
