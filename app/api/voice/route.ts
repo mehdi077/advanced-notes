@@ -149,6 +149,18 @@ export async function POST(req: NextRequest) {
 
             audioArrayBuffer = await speechResponse.arrayBuffer();
             console.log(`✅ TTS complete (${Date.now() - ttsStart}ms): ${audioArrayBuffer.byteLength} bytes`);
+            
+            // Validate audio data
+            if (!audioArrayBuffer || audioArrayBuffer.byteLength === 0) {
+                throw new Error('Generated audio is empty');
+            }
+            
+            // Validate WAV header (should start with "RIFF")
+            const headerView = new Uint8Array(audioArrayBuffer.slice(0, 4));
+            const header = String.fromCharCode(...headerView);
+            if (header !== 'RIFF') {
+                console.warn('⚠️ Audio may not be valid WAV format (missing RIFF header)');
+            }
         } catch (error: any) {
             console.error('❌ TTS error:', error);
             return NextResponse.json({ 

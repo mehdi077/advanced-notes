@@ -219,6 +219,19 @@ export default function VoiceChat() {
           const responseAudioBlob = await response.blob();
           console.log('🔊 Received audio blob:', responseAudioBlob.size, 'bytes, type:', responseAudioBlob.type);
           
+          // Validate audio blob
+          if (responseAudioBlob.size === 0) {
+            console.error('❌ Received empty audio blob');
+            throw new Error('Received empty audio response');
+          }
+          
+          // Validate audio type
+          const contentType = responseAudioBlob.type;
+          if (!contentType || (!contentType.includes('audio/') && !contentType.includes('application/octet-stream'))) {
+            console.error('❌ Invalid audio content type:', contentType);
+            throw new Error(`Invalid audio format: ${contentType}`);
+          }
+          
           // Revoke previous audio URL if exists
           if (audioUrl) {
             URL.revokeObjectURL(audioUrl);
@@ -230,28 +243,46 @@ export default function VoiceChat() {
           
           // Auto-play
           if (audioRef.current) {
-            audioRef.current.src = url;
-            audioRef.current.load(); // Ensure the audio is loaded
-            console.log('▶️ Attempting to play audio...');
+            const audioElement = audioRef.current;
+            audioElement.src = url;
+            
+            // Set up one-time load event handler
+            const handleLoadError = () => {
+              console.error('❌ Audio failed to load after setting src');
+              setPermissionError('Audio format not supported by browser');
+              setStatus('idle');
+            };
+            
+            audioElement.addEventListener('error', handleLoadError, { once: true });
             
             try {
+              await audioElement.load(); // Ensure the audio is loaded
+              console.log('▶️ Attempting to play audio...');
+              
               // Try to play
-              const playPromise = audioRef.current.play();
+              const playPromise = audioElement.play();
               
               if (playPromise !== undefined) {
                 await playPromise;
                 setIsPlayingAudio(true);
                 setStatus('speaking');
                 console.log('✅ Audio playing successfully');
+                // Remove error listener if play succeeds
+                audioElement.removeEventListener('error', handleLoadError);
               }
             } catch (error: any) {
               console.error("❌ Autoplay failed:", error);
               console.error("Error name:", error.name);
               console.error("Error message:", error.message);
               
+              // Remove error listener
+              audioElement.removeEventListener('error', handleLoadError);
+              
               // Set error with helpful message
               if (error.name === 'NotAllowedError') {
                 setPermissionError('Browser blocked autoplay. Please click the audio player to play.');
+              } else if (error.name === 'NotSupportedError') {
+                setPermissionError('Audio format not supported by your browser');
               } else {
                 setPermissionError(`Audio playback failed: ${error.message}`);
               }
@@ -565,9 +596,37 @@ export default function VoiceChat() {
             ref={audioRef} 
             onEnded={handleAudioEnded}
             onError={(e) => {
-              console.error('❌ Audio element error:', e);
-              setPermissionError('Audio failed to load');
+              const audioElement = e.currentTarget;
+              const error = audioElement.error;
+              console.error('❌ Audio element error:', {
+                code: error?.code,
+                message: error?.message,
+                src: audioElement.src,
+                networkState: audioElement.networkState,
+                readyState: audioElement.readyState,
+              });
+              
+              let errorMessage = 'Audio failed to load';
+              if (error) {
+                switch (error.code) {
+                  case MediaError.MEDIA_ERR_ABORTED:
+                    errorMessage = 'Audio loading was aborted';
+                    break;
+                  case MediaError.MEDIA_ERR_NETWORK:
+                    errorMessage = 'Network error while loading audio';
+                    break;
+                  case MediaError.MEDIA_ERR_DECODE:
+                    errorMessage = 'Audio format not supported or corrupted';
+                    break;
+                  case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                    errorMessage = 'Audio source not supported';
+                    break;
+                }
+              }
+              
+              setPermissionError(errorMessage);
               setStatus('idle');
+              setIsPlayingAudio(false);
             }}
             onLoadedData={() => console.log('✅ Audio loaded successfully')}
             onCanPlay={() => console.log('✅ Audio can play')}
