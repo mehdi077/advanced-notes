@@ -215,26 +215,27 @@ export default function VoiceChat() {
             setCurrentGeneration('');
           }
 
-          // Get audio blob
-          const responseAudioBlob = await response.blob();
-          console.log('🔊 Received audio blob:', {
-            size: responseAudioBlob.size,
-            type: responseAudioBlob.type,
+          // Get audio blob with proper mime type
+          const responseArrayBuffer = await response.arrayBuffer();
+          console.log('🔊 Received audio data:', {
+            size: responseArrayBuffer.byteLength,
             contentType: response.headers.get('Content-Type')
           });
           
-          // Validate audio blob
-          if (responseAudioBlob.size === 0) {
-            console.error('❌ Received empty audio blob');
+          // Validate audio data
+          if (responseArrayBuffer.byteLength === 0) {
+            console.error('❌ Received empty audio data');
             throw new Error('Received empty audio response');
           }
           
-          // Validate audio type
-          const contentType = responseAudioBlob.type;
-          if (!contentType || (!contentType.includes('audio/') && !contentType.includes('application/octet-stream'))) {
-            console.error('❌ Invalid audio content type:', contentType);
-            throw new Error(`Invalid audio format: ${contentType}`);
-          }
+          // Create blob with explicit mime type from response headers
+          const contentType = response.headers.get('Content-Type') || 'audio/mpeg';
+          const responseAudioBlob = new Blob([responseArrayBuffer], { type: contentType });
+          
+          console.log('🔊 Created audio blob:', {
+            size: responseAudioBlob.size,
+            type: responseAudioBlob.type
+          });
           
           // Check browser audio format support
           const audio = document.createElement('audio');
