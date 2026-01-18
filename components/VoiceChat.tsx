@@ -606,37 +606,44 @@ export default function VoiceChat() {
             ref={audioRef} 
             onEnded={handleAudioEnded}
             onError={(e) => {
-              const audioElement = e.currentTarget;
-              const error = audioElement.error;
-              console.error('❌ Audio element error:', {
-                code: error?.code,
-                message: error?.message,
-                src: audioElement.src,
-                networkState: audioElement.networkState,
-                readyState: audioElement.readyState,
-              });
-              
-              let errorMessage = 'Audio failed to load';
-              if (error) {
-                switch (error.code) {
-                  case MediaError.MEDIA_ERR_ABORTED:
-                    errorMessage = 'Audio loading was aborted';
-                    break;
-                  case MediaError.MEDIA_ERR_NETWORK:
-                    errorMessage = 'Network error while loading audio';
-                    break;
-                  case MediaError.MEDIA_ERR_DECODE:
-                    errorMessage = 'Audio format not supported or corrupted';
-                    break;
-                  case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-                    errorMessage = 'Audio source not supported';
-                    break;
+              try {
+                const audioElement = e.currentTarget;
+                const error = audioElement.error;
+                console.log('❌ Audio element error:', {
+                  code: error?.code,
+                  message: error?.message,
+                  src: audioElement.src,
+                  networkState: audioElement.networkState,
+                  readyState: audioElement.readyState,
+                });
+                
+                let errorMessage = 'Audio failed to load';
+                if (error?.code) {
+                  switch (error.code) {
+                    case 1: // MEDIA_ERR_ABORTED
+                      errorMessage = 'Audio loading was aborted';
+                      break;
+                    case 2: // MEDIA_ERR_NETWORK
+                      errorMessage = 'Network error while loading audio';
+                      break;
+                    case 3: // MEDIA_ERR_DECODE
+                      errorMessage = 'Audio format not supported or corrupted';
+                      break;
+                    case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
+                      errorMessage = 'Audio source not supported';
+                      break;
+                  }
                 }
+                
+                setPermissionError(errorMessage);
+                setStatus('idle');
+                setIsPlayingAudio(false);
+              } catch (err) {
+                console.log('Error in audio error handler:', err);
+                setPermissionError('Audio playback error');
+                setStatus('idle');
+                setIsPlayingAudio(false);
               }
-              
-              setPermissionError(errorMessage);
-              setStatus('idle');
-              setIsPlayingAudio(false);
             }}
             onLoadedData={() => console.log('✅ Audio loaded successfully')}
             onCanPlay={() => console.log('✅ Audio can play')}
