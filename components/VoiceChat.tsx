@@ -217,7 +217,11 @@ export default function VoiceChat() {
 
           // Get audio blob
           const responseAudioBlob = await response.blob();
-          console.log('🔊 Received audio blob:', responseAudioBlob.size, 'bytes, type:', responseAudioBlob.type);
+          console.log('🔊 Received audio blob:', {
+            size: responseAudioBlob.size,
+            type: responseAudioBlob.type,
+            contentType: response.headers.get('Content-Type')
+          });
           
           // Validate audio blob
           if (responseAudioBlob.size === 0) {
@@ -231,6 +235,12 @@ export default function VoiceChat() {
             console.error('❌ Invalid audio content type:', contentType);
             throw new Error(`Invalid audio format: ${contentType}`);
           }
+          
+          // Check browser audio format support
+          const audio = document.createElement('audio');
+          const canPlayMP3 = audio.canPlayType('audio/mpeg');
+          const canPlayWAV = audio.canPlayType('audio/wav');
+          console.log('🎵 Browser audio support:', { mp3: canPlayMP3, wav: canPlayWAV });
           
           // Revoke previous audio URL if exists
           if (audioUrl) {
