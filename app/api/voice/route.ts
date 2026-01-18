@@ -10,14 +10,29 @@ export async function POST(req: NextRequest) {
     const startTime = Date.now();
     
     try {
+        // Debug: Log all environment variables starting with GROQ
+        console.log('🔍 Environment check:', {
+            hasGroqKey: !!process.env.GROQ_API_KEY,
+            nodeEnv: process.env.NODE_ENV,
+            allEnvKeys: Object.keys(process.env).filter(k => k.includes('GROQ') || k.includes('API'))
+        });
+        
         // Validate API key
         const apiKey = process.env.GROQ_API_KEY;
-        console.log('🔑 API Key check:', apiKey ? `Set (${apiKey.substring(0, 10)}...)` : 'NOT SET');
         
         if (!apiKey) {
             console.error('❌ GROQ_API_KEY is not set in environment variables');
-            return NextResponse.json({ error: 'API configuration error: GROQ_API_KEY is missing' }, { status: 500 });
+            console.error('Available env keys:', Object.keys(process.env).join(', '));
+            return NextResponse.json({ 
+                error: 'API configuration error: GROQ_API_KEY is missing',
+                debug: {
+                    nodeEnv: process.env.NODE_ENV,
+                    hasNextRuntime: !!process.env.NEXT_RUNTIME
+                }
+            }, { status: 500 });
         }
+
+        console.log('✅ API Key found:', apiKey.substring(0, 10) + '...');
 
         const groq = new Groq({
             apiKey: apiKey,
