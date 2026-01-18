@@ -4,7 +4,7 @@ interface VoiceState {
   isListening: boolean;
   isProcessing: boolean;
   isPlayingAudio: boolean;
-  status: 'idle' | 'listening' | 'transcribing' | 'thinking' | 'generating_audio' | 'speaking';
+  status: 'idle' | 'recording' | 'ready_to_generate' | 'transcribing' | 'thinking' | 'generating_audio' | 'speaking';
   isModalOpen: boolean;
   conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
   setIsListening: (isListening: boolean) => void;

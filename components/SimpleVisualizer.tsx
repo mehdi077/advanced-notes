@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 interface SimpleVisualizerProps {
-  status: 'idle' | 'listening' | 'transcribing' | 'thinking' | 'generating_audio' | 'speaking';
+  status: 'idle' | 'recording' | 'ready_to_generate' | 'transcribing' | 'thinking' | 'generating_audio' | 'speaking';
   stream?: MediaStream | null;
   audioElement?: HTMLAudioElement | null;
 }
@@ -14,9 +14,9 @@ export default function SimpleVisualizer({ status, stream, audioElement }: Simpl
   const audioContextRef = useRef<AudioContext | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
-  // Setup audio analyzer for listening state
+  // Setup audio analyzer for recording state
   useEffect(() => {
-    if (status === 'listening' && stream) {
+    if (status === 'recording' && stream) {
       try {
         const audioContext = new AudioContext();
         const analyser = audioContext.createAnalyser();
@@ -32,7 +32,7 @@ export default function SimpleVisualizer({ status, stream, audioElement }: Simpl
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
         const updateAudioData = () => {
-          if (analyserRef.current && status === 'listening') {
+          if (analyserRef.current && status === 'recording') {
             analyserRef.current.getByteFrequencyData(dataArray);
             const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
             setAudioLevel(average / 255);
@@ -98,14 +98,17 @@ export default function SimpleVisualizer({ status, stream, audioElement }: Simpl
           audioContextRef.current.close();
         }
       };
-    } else if (status !== 'listening') {
+    } else if (status !== 'recording') {
       setAudioLevel(0);
     }
   }, [status, audioElement]);
+  
   const getStatusColor = () => {
     switch (status) {
-      case 'listening':
-        return 'bg-cyan-500';
+      case 'recording':
+        return 'bg-red-500';
+      case 'ready_to_generate':
+        return 'bg-green-500';
       case 'transcribing':
       case 'thinking':
         return 'bg-blue-500';
@@ -120,8 +123,10 @@ export default function SimpleVisualizer({ status, stream, audioElement }: Simpl
 
   const getRingColor = () => {
     switch (status) {
-      case 'listening':
-        return 'border-cyan-500';
+      case 'recording':
+        return 'border-red-500';
+      case 'ready_to_generate':
+        return 'border-green-500';
       case 'transcribing':
       case 'thinking':
         return 'border-blue-500';
@@ -136,8 +141,10 @@ export default function SimpleVisualizer({ status, stream, audioElement }: Simpl
 
   const getStatusText = () => {
     switch (status) {
-      case 'listening':
-        return 'Listening...';
+      case 'recording':
+        return 'Recording...';
+      case 'ready_to_generate':
+        return 'Ready';
       case 'transcribing':
         return 'Transcribing...';
       case 'thinking':
@@ -147,11 +154,11 @@ export default function SimpleVisualizer({ status, stream, audioElement }: Simpl
       case 'speaking':
         return 'Speaking...';
       default:
-        return 'Ready';
+        return 'Idle';
     }
   };
 
-  const shouldPulse = status === 'listening' || status === 'speaking';
+  const shouldPulse = status === 'recording' || status === 'speaking';
   const scale = 1 + (audioLevel * 0.3);
 
   return (

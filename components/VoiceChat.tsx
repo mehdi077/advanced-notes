@@ -1,11 +1,9 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useMicVAD } from '@ricky0123/vad-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
-import { float32ToWav } from '@/utils/audio';
 import SimpleVisualizer from '@/components/SimpleVisualizer';
-import { X } from 'lucide-react';
+import { X, Mic, Square, Send } from 'lucide-react';
 
 export default function VoiceChat() {
   const { 
@@ -31,8 +29,13 @@ export default function VoiceChat() {
   const [currentTranscription, setCurrentTranscription] = useState<string>('');
   const [currentGeneration, setCurrentGeneration] = useState<string>('');
   const conversationScrollRef = useRef<HTMLDivElement>(null);
-  const vadInstanceRef = useRef<any>(null);
-  const processingRef = useRef(false);
+  
+  // Manual recording state
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -50,20 +53,26 @@ export default function VoiceChat() {
         audioRef.current.pause();
         audioRef.current.src = '';
       }
+      // Clear recording timer
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
     };
   }, [audioUrl, stream]);
 
   // Unlock audio context on user interaction
-  const unlockAudio = () => {
+  const unlockAudio = useCallback(() => {
+    if (audioContextUnlocked) return;
     const silentAudio = new Audio('data:audio/wav;base64,UklGRi9AAABAAAAAAABAAEA8AEAAP///AAAABJRU5ErkJggg==');
     silentAudio.play().then(() => {
       silentAudio.pause();
       silentAudio.currentTime = 0;
       setAudioContextUnlocked(true);
+      console.log('✅ Audio context unlocked');
     }).catch((e) => {
       console.warn('Audio unlock failed:', e);
     });
-  };
+  }, [audioContextUnlocked]);
 
   // Auto-scroll to bottom of conversation
   useEffect(() => {
@@ -72,15 +81,110 @@ export default function VoiceChat() {
     }
   }, [conversationHistory, currentTranscription, currentGeneration]);
 
-  // Process audio through API
-  const processAudio = async (audioBlob: Blob) => {
-    // Prevent concurrent processing
-    if (processingRef.current) {
-      console.warn('Already processing audio, skipping...');
+  // Start recording
+  const startRecording = useCallback(async () => {
+    try {
+      setPermissionError(null);
+      unlockAudio();
+
+      console.log('🎤 Requesting microphone access...');
+      
+      // Request microphone access
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: { ideal: 16000 }
+        }
+      }).catch(async (err) => {
+        if (err.name === 'OverconstrainedError') {
+          console.log('📱 Using fallback audio constraints');
+          return navigator.mediaDevices.getUserMedia({ audio: true });
+        }
+        throw err;
+      });
+
+      setStream(mediaStream);
+
+      // Setup MediaRecorder
+      audioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(mediaStream, {
+        mimeType: 'audio/webm',
+      });
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setRecordedAudioBlob(audioBlob);
+        setStatus('ready_to_generate');
+        console.log('🎤 Recording stopped, blob size:', audioBlob.size);
+      };
+
+      mediaRecorderRef.current = mediaRecorder;
+      mediaRecorder.start();
+      
+      setStatus('recording');
+      setIsListening(true);
+      setRecordingDuration(0);
+      
+      // Start timer
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
+
+      console.log('✅ Recording started...');
+      
+    } catch (err: any) {
+      console.error("❌ Microphone access error:", err);
+      
+      let errorMessage = 'Failed to start recording';
+      
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        errorMessage = 'Microphone permission denied. Please allow microphone access.';
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        errorMessage = 'No microphone found. Please connect a microphone.';
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        errorMessage = 'Microphone is already in use.';
+      } else if (err.name === 'SecurityError') {
+        errorMessage = 'Security error: Microphone requires HTTPS.';
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      setPermissionError(errorMessage);
+      setStatus('idle');
+      setIsListening(false);
+    }
+  }, [setStatus, setIsListening, unlockAudio]);
+
+  // Stop recording
+  const stopRecording = useCallback(() => {
+    console.log('🛑 Stopping recording...');
+    
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    
+    setIsListening(false);
+  }, [setIsListening]);
+
+  // Process recorded audio through API
+  const generateResponse = useCallback(async () => {
+    if (!recordedAudioBlob) {
+      console.error('No recorded audio to process');
       return;
     }
-
-    processingRef.current = true;
 
     try {
       setStatus('transcribing');
@@ -90,7 +194,7 @@ export default function VoiceChat() {
       setPermissionError(null);
 
       const formData = new FormData();
-      formData.append('audio', audioBlob, 'input.wav');
+      formData.append('audio', recordedAudioBlob, 'input.webm');
       formData.append('conversationHistory', JSON.stringify(conversationHistory));
       
       const response = await fetch('/api/voice', {
@@ -136,8 +240,8 @@ export default function VoiceChat() {
       const url = URL.createObjectURL(responseAudioBlob);
       setAudioUrl(url);
       
-      // Auto-play if audio context is unlocked
-      if (audioContextUnlocked && audioRef.current) {
+      // Auto-play
+      if (audioRef.current) {
         audioRef.current.src = url;
         
         try {
@@ -146,88 +250,35 @@ export default function VoiceChat() {
           setStatus('speaking');
         } catch (error) {
           console.error("Autoplay failed:", error);
-          // Fallback: return to listening state
-          setStatus('listening');
-          if (vadInstanceRef.current && isListening) {
-            vadInstanceRef.current.start();
-          }
-        }
-      } else {
-        // If audio context not unlocked, go back to listening
-        setStatus('listening');
-        if (vadInstanceRef.current && isListening) {
-          vadInstanceRef.current.start();
+          setStatus('idle');
         }
       }
+      
+      // Clear recorded blob
+      setRecordedAudioBlob(null);
+      
     } catch (error: any) {
       console.error('Processing error:', error);
       setPermissionError(error.message || 'Failed to process audio');
-      setStatus('listening');
-      setCurrentTranscription('');
-      setCurrentGeneration('');
-      
-      // Resume VAD only if still in listening mode
-      if (vadInstanceRef.current && isListening && status === 'listening') {
-        try {
-          vadInstanceRef.current.start();
-        } catch (e) {
-          console.error('Failed to resume VAD:', e);
-        }
-      }
+      setStatus('ready_to_generate');
     } finally {
       setIsProcessing(false);
-      processingRef.current = false;
     }
-  };
+  }, [recordedAudioBlob, conversationHistory, audioUrl, setStatus, setIsPlayingAudio, addToConversation]);
 
-  const vad = useMicVAD({
-    startOnLoad: false,
-    baseAssetPath: "/",
-    onnxWASMBasePath: "/",
-    positiveSpeechThreshold: 0.6,
-    negativeSpeechThreshold: 0.4,
-    onSpeechStart: () => {
-      console.log('🗣️ Speech started');
-    },
-    onSpeechEnd: (audio) => {
-      console.log('🛑 Speech ended, processing...');
-      
-      // Only process if we're in listening state and not already processing
-      if (status !== 'listening' || processingRef.current) {
-        console.log('Ignoring speech end - status:', status, 'processing:', processingRef.current);
-        return;
-      }
-
-      // Pause VAD immediately
-      if (vadInstanceRef.current) {
-        vadInstanceRef.current.pause();
-      }
-
-      // Convert and process audio
-      const wavBlob = float32ToWav(audio);
-      processAudio(wavBlob);
-    },
-    onVADMisfire: () => {
-      console.log('⚠️ VAD misfire');
-    },
-  });
-
-  // Store VAD instance reference
-  useEffect(() => {
-    vadInstanceRef.current = vad;
-  }, [vad]);
-
-  // Cancel everything and reset to idle
-  const cancelSession = useCallback(() => {
-    console.log('🛑 Canceling session...');
+  // Cancel/Reset everything
+  const resetSession = useCallback(() => {
+    console.log('🛑 Resetting session...');
     
-    // Pause VAD
-    if (vadInstanceRef.current) {
-      try {
-        vadInstanceRef.current.pause();
-      } catch (e) {
-        console.error('Error pausing VAD:', e);
-      }
+    // Stop recording if active
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    
+    // Clear recording timer
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
     }
     
     // Stop and cleanup media stream
@@ -250,114 +301,35 @@ export default function VoiceChat() {
     setIsPlayingAudio(false);
     setStatus('idle');
     setIsProcessing(false);
-    processingRef.current = false;
+    setRecordedAudioBlob(null);
+    setRecordingDuration(0);
+    audioChunksRef.current = [];
     
-    console.log('✅ Session canceled');
+    console.log('✅ Session reset');
   }, [stream, setIsListening, setStatus, setIsPlayingAudio]);
-
-  // Start/Stop Session
-  const toggleSession = useCallback(async () => {
-    if (isListening) {
-      cancelSession();
-    } else {
-      try {
-        setPermissionError(null);
-        
-        // Unlock audio context on user interaction
-        unlockAudio();
-        
-        console.log('🎬 Requesting microphone access...');
-        
-        // Request microphone access with fallback
-        let mediaStream: MediaStream;
-        try {
-          mediaStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-              sampleRate: { ideal: 16000 }
-            }
-          });
-        } catch (err: any) {
-          if (err.name === 'OverconstrainedError') {
-            console.log('📱 Using fallback audio constraints');
-            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          } else {
-            throw err;
-          }
-        }
-        
-        setStream(mediaStream);
-        
-        // Start VAD with the stream
-        if (vadInstanceRef.current) {
-          vadInstanceRef.current.start(mediaStream);
-        }
-        
-        setIsListening(true);
-        setStatus('listening');
-        console.log('✅ Listening for speech...');
-        
-      } catch (err: any) {
-        console.error("❌ Microphone access error:", err);
-        
-        // Provide specific error messages
-        let errorMessage = 'Failed to start voice detection';
-        
-        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-          errorMessage = 'Microphone permission denied. Please allow microphone access in your browser settings.';
-        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-          errorMessage = 'No microphone found. Please connect a microphone and try again.';
-        } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-          errorMessage = 'Microphone is already in use by another application.';
-        } else if (err.name === 'SecurityError') {
-          errorMessage = 'Security error: Microphone access requires HTTPS.';
-        } else if (err.message) {
-          errorMessage = err.message;
-        }
-        
-        setPermissionError(errorMessage);
-        setStatus('idle');
-        setIsListening(false);
-        
-        // Cleanup on error
-        if (stream) {
-          stream.getTracks().forEach(track => track.stop());
-          setStream(null);
-        }
-      }
-    }
-  }, [isListening, cancelSession, setIsListening, setStatus, stream]);
 
   // Audio Ended Handler
   const handleAudioEnded = useCallback(() => {
     console.log('🔊 Audio playback ended');
     setIsPlayingAudio(false);
-    
-    // Only resume listening if we're still in listening mode
-    if (isListening && vadInstanceRef.current) {
-      setStatus('listening');
-      try {
-        vadInstanceRef.current.start();
-        console.log('🎤 Resumed listening');
-      } catch (e) {
-        console.error('Failed to resume VAD:', e);
-        setPermissionError('Failed to resume voice detection');
-      }
-    } else {
-      setStatus('idle');
-    }
-  }, [isListening, setStatus, setIsPlayingAudio]);
+    setStatus('idle');
+  }, [setStatus, setIsPlayingAudio]);
 
-  // Close modal handler with conversation wipe
-  const closeModal = () => {
-    cancelSession();
+  // Close modal handler
+  const closeModal = useCallback(() => {
+    resetSession();
     clearConversation();
     setIsModalOpen(false);
     setPermissionError(null);
     setCurrentTranscription('');
     setCurrentGeneration('');
+  }, [resetSession, clearConversation, setIsModalOpen]);
+
+  // Format recording duration
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   if (!isModalOpen) return null;
@@ -386,12 +358,12 @@ export default function VoiceChat() {
           <div className="px-4 py-3 md:px-6 md:py-4 border-b border-zinc-800 flex-shrink-0">
             <h2 className="text-lg md:text-xl font-semibold text-white pr-10">Voice Assistant</h2>
             <p className="text-xs md:text-sm text-zinc-400 mt-1">
-              {vad.loading ? 'Loading voice detection...' :
-               status === 'idle' ? 'Tap START to begin' : 
-               status === 'listening' ? 'Listening...' :
+              {status === 'idle' ? 'Press Record to start' : 
+               status === 'recording' ? `Recording... ${formatDuration(recordingDuration)}` :
+               status === 'ready_to_generate' ? 'Press Generate to process' :
                status === 'transcribing' ? 'Transcribing...' :
                status === 'thinking' ? 'Thinking...' :
-               status === 'generating_audio' ? 'Generating...' :
+               status === 'generating_audio' ? 'Generating response...' :
                status === 'speaking' ? 'Speaking...' : ''}
             </p>
           </div>
@@ -414,26 +386,58 @@ export default function VoiceChat() {
                 audioElement={audioRef.current}
               />
 
-              {/* Start button */}
-              {status === 'idle' && (
-                <button
-                  onClick={toggleSession}
-                  disabled={isProcessing || vad.loading}
-                  className="mt-4 px-6 py-2.5 md:px-8 md:py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-zinc-700 disabled:cursor-not-allowed rounded-full text-white font-medium text-sm md:text-base shadow-lg transition-colors"
-                >
-                  {vad.loading ? 'Loading VAD...' : isProcessing ? 'Loading...' : 'START'}
-                </button>
-              )}
+              {/* Control buttons */}
+              <div className="mt-4 flex flex-col gap-2 items-center">
+                {/* Idle state - Show Record button */}
+                {status === 'idle' && (
+                  <button
+                    onClick={startRecording}
+                    disabled={isProcessing}
+                    className="px-6 py-2.5 md:px-8 md:py-3 bg-red-600 hover:bg-red-700 active:bg-red-800 disabled:bg-zinc-700 disabled:cursor-not-allowed rounded-full text-white font-medium text-sm md:text-base shadow-lg transition-colors flex items-center gap-2"
+                  >
+                    <Mic size={18} />
+                    RECORD
+                  </button>
+                )}
 
-              {/* Stop button */}
-              {status !== 'idle' && (
-                <button
-                  onClick={cancelSession}
-                  className="mt-4 px-6 py-2.5 bg-red-600 hover:bg-red-700 active:bg-red-800 rounded-full text-white font-medium text-sm transition-colors"
-                >
-                  STOP
-                </button>
-              )}
+                {/* Recording state - Show Stop button */}
+                {status === 'recording' && (
+                  <button
+                    onClick={stopRecording}
+                    className="px-6 py-2.5 md:px-8 md:py-3 bg-zinc-700 hover:bg-zinc-600 active:bg-zinc-500 rounded-full text-white font-medium text-sm md:text-base shadow-lg transition-colors flex items-center gap-2"
+                  >
+                    <Square size={18} />
+                    STOP
+                  </button>
+                )}
+
+                {/* Ready to generate - Show Generate button */}
+                {status === 'ready_to_generate' && (
+                  <div className="flex flex-col gap-2 items-center">
+                    <button
+                      onClick={generateResponse}
+                      disabled={isProcessing}
+                      className="px-6 py-2.5 md:px-8 md:py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-zinc-700 disabled:cursor-not-allowed rounded-full text-white font-medium text-sm md:text-base shadow-lg transition-colors flex items-center gap-2"
+                    >
+                      <Send size={18} />
+                      GENERATE
+                    </button>
+                    <button
+                      onClick={resetSession}
+                      className="px-4 py-1.5 text-xs text-zinc-400 hover:text-white transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+
+                {/* Processing states - Show status */}
+                {(status === 'transcribing' || status === 'thinking' || status === 'generating_audio' || status === 'speaking') && (
+                  <div className="px-6 py-2.5 text-sm text-zinc-400">
+                    Processing...
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Live conversation view */}
