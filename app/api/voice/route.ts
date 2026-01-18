@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
         
         return new NextResponse(arrayBuffer, {
             headers: {
-                'Content-Type': 'audio/mpeg',
+                'Content-Type': 'audio/wav',
                 'X-Transcription': encodeURIComponent(transcribedText),
                 'X-Response-Text': encodeURIComponent(responseText),
             },

@@ -63,10 +63,7 @@ export default function VoiceChat() {
   // Process audio through API
   const processAudio = async (audioBlob: Blob) => {
     try {
-      setStatus('transcribing');
-      setIsProcessing(true);
-      setCurrentTranscription('');
-      setCurrentGeneration('');
+      setStatus('transcribing');\n      setIsProcessing(true);\n      setCurrentTranscription('');\n      setCurrentGeneration('');\n      await new Promise(r => setTimeout(r, 800));\n      setStatus('thinking');
 
       const formData = new FormData();
       formData.append('audio', audioBlob, 'input.wav');
@@ -133,52 +130,7 @@ export default function VoiceChat() {
   };
 
   // VAD Hook with custom stream handler for visualization
-  const vad = useMicVAD({
-    startOnLoad: false,
-    baseAssetPath: "/",
-    onnxWASMBasePath: "/",
-    positiveSpeechThreshold: 0.5,
-    negativeSpeechThreshold: 0.35,
-    redemptionFrames: 8,
-    preSpeechPadFrames: 1,
-    minSpeechFrames: 3,
-    // Custom stream getter to capture stream for visualization
-    getStream: async () => {
-      console.log('🎤 VAD requesting microphone access...');
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: { ideal: 16000 },
-        }
-      });
-      console.log('✅ Microphone access granted');
-      // Capture stream for visualization
-      setStream(mediaStream);
-      return mediaStream;
-    },
-    onSpeechStart: () => {
-      console.log('🎤 VAD: Speech started');
-    },
-    onSpeechEnd: (audio) => {
-      console.log('🎤 VAD: Speech ended, audio length:', audio.length);
-      if (status !== 'listening') {
-        console.log('⚠️ Ignoring speech end - not in listening state, current status:', status);
-        return;
-      }
-
-      console.log('✅ Processing speech...');
-      vad.pause();
-      
-      const wavBlob = float32ToWav(audio);
-      console.log('📦 WAV blob created, size:', wavBlob.size);
-      processAudio(wavBlob);
-    },
-    onVADMisfire: () => {
-      console.log('⚠️ VAD misfire (noise detected)');
-    },
-  });
+  const vad = useMicVAD({\n    stream,\n    startOnLoad: false,\n    baseAssetPath: \"/\",\n    onnxWASMBasePath: \"/\",\n    positiveSpeechThreshold: 0.5,\n    negativeSpeechThreshold: 0.35,\n    redemptionFrames: 8,\n    preSpeechPadFrames: 1,\n    minSpeechFrames: 3,\n    onSpeechStart: () => {\n      console.log('🎤 VAD: Speech started');\n    },\n    onSpeechEnd: (audio) => {\n      console.log('🎤 VAD: Speech ended, audio length:', audio.length);\n      if (status !== 'listening') {\n        console.log('⚠️ Ignoring speech end - not in listening state, current status:', status);\n        return;\n      }\n\n      console.log('✅ Processing speech...');\n      vad.pause();\n      \n      const wavBlob = float32ToWav(audio);\n      console.log('📦 WAV blob created, size:', wavBlob.size);\n      processAudio(wavBlob);\n    },\n    onVADMisfire: () => {\n      console.log('⚠️ VAD misfire (noise detected)');\n    },\n  });
 
   // Cancel everything and reset to idle
   const cancelSession = useCallback(() => {
