@@ -144,7 +144,7 @@ export async function POST(req: NextRequest) {
                 model: 'canopylabs/orpheus-v1-english', 
                 voice: 'daniel',
                 input: responseText,
-                response_format: 'mp3',
+                response_format: 'wav',
             });
 
             audioArrayBuffer = await speechResponse.arrayBuffer();
@@ -161,7 +161,7 @@ export async function POST(req: NextRequest) {
         // Return audio with metadata in headers
         return new NextResponse(audioArrayBuffer, {
             headers: {
-                'Content-Type': 'audio/mpeg',
+                'Content-Type': 'audio/wav',
                 'Content-Length': audioArrayBuffer.byteLength.toString(),
                 'X-Transcription': encodeURIComponent(transcribedText),
                 'X-Response-Text': encodeURIComponent(responseText),
