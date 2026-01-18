@@ -11,13 +11,16 @@ export async function POST(req: NextRequest) {
     
     try {
         // Validate API key
-        if (!process.env.GROQ_API_KEY) {
-            console.error('❌ GROQ_API_KEY is not set');
-            return NextResponse.json({ error: 'API configuration error' }, { status: 500 });
+        const apiKey = process.env.GROQ_API_KEY;
+        console.log('🔑 API Key check:', apiKey ? `Set (${apiKey.substring(0, 10)}...)` : 'NOT SET');
+        
+        if (!apiKey) {
+            console.error('❌ GROQ_API_KEY is not set in environment variables');
+            return NextResponse.json({ error: 'API configuration error: GROQ_API_KEY is missing' }, { status: 500 });
         }
 
         const groq = new Groq({
-            apiKey: process.env.GROQ_API_KEY,
+            apiKey: apiKey,
         });
 
         // Parse form data
