@@ -186,16 +186,31 @@ export default function VoiceChat() {
           // Auto-play
           if (audioRef.current) {
             audioRef.current.src = url;
+            audioRef.current.load(); // Ensure the audio is loaded
             console.log('▶️ Attempting to play audio...');
             
             try {
-              await audioRef.current.play();
-              setIsPlayingAudio(true);
-              setStatus('speaking');
-              console.log('✅ Audio playing successfully');
-            } catch (error) {
+              // Try to play
+              const playPromise = audioRef.current.play();
+              
+              if (playPromise !== undefined) {
+                await playPromise;
+                setIsPlayingAudio(true);
+                setStatus('speaking');
+                console.log('✅ Audio playing successfully');
+              }
+            } catch (error: any) {
               console.error("❌ Autoplay failed:", error);
-              setPermissionError('Audio playback failed. Click to play manually.');
+              console.error("Error name:", error.name);
+              console.error("Error message:", error.message);
+              
+              // Set error with helpful message
+              if (error.name === 'NotAllowedError') {
+                setPermissionError('Browser blocked autoplay. Please click the audio player to play.');
+              } else {
+                setPermissionError(`Audio playback failed: ${error.message}`);
+              }
+              
               setStatus('idle');
             }
           } else {
@@ -487,8 +502,40 @@ export default function VoiceChat() {
           <audio 
             ref={audioRef} 
             onEnded={handleAudioEnded}
+            onError={(e) => {
+              console.error('❌ Audio element error:', e);
+              setPermissionError('Audio failed to load');
+              setStatus('idle');
+            }}
+            onLoadedData={() => console.log('✅ Audio loaded successfully')}
+            onCanPlay={() => console.log('✅ Audio can play')}
+            onPlay={() => console.log('▶️ Audio started playing')}
+            onPause={() => console.log('⏸️ Audio paused')}
+            playsInline
             className="hidden" 
           />
+          
+          {/* Manual play button if autoplay fails */}
+          {audioUrl && !isPlayingAudio && status === 'idle' && (
+            <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-10">
+              <button
+                onClick={async () => {
+                  if (audioRef.current) {
+                    try {
+                      await audioRef.current.play();
+                      setIsPlayingAudio(true);
+                      setStatus('speaking');
+                    } catch (err) {
+                      console.error('Manual play failed:', err);
+                    }
+                  }
+                }}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-full text-white text-sm shadow-lg"
+              >
+                ▶️ Play Response
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </>
