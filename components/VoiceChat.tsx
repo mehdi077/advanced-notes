@@ -69,7 +69,7 @@ export default function VoiceChat() {
       setCurrentGeneration('');
 
       // Brief delay to show transcribing
-      await new Promise(resolve => setTimeout(resolve, 800));
+      await new Promise((resolve) => setTimeout(resolve, 800));
       setStatus('thinking');
 
       const formData = new FormData();
@@ -136,8 +136,47 @@ export default function VoiceChat() {
     }
   };
 
-  // VAD Hook with custom stream handler for visualization
-  const vad = useMicVAD({\n    startOnLoad: false,\n    baseAssetPath: \"/\",\n    onnxWASMBasePath: \"/\",\n    positiveSpeechThreshold: 0.5,\n    negativeSpeechThreshold: 0.35,\n    redemptionFrames: 8,\n    preSpeechPadFrames: 1,\n    minSpeechFrames: 3,\n    onSpeechStart: () => {\n      console.log('🎤 VAD: Speech started');\n    },\n    onSpeechEnd: (audio) => {\n      console.log('🎤 VAD: Speech ended, audio length:', audio.length);\n      if (status !== 'listening') {\n        console.log('⚠️ Ignoring speech end - not in listening state, current status:', status);\n        return;\n      }\n\n      console.log('✅ Processing speech...');\n      vad.pause();\n      \n      const wavBlob = float32ToWav(audio);\n      console.log('📦 WAV blob created, size:', wavBlob.size);\n      processAudio(wavBlob);\n    },\n    onVADMisfire: () => {\n      console.log('⚠️ VAD misfire (noise detected)');\n    },\n  });
+  const vad = useMicVAD({
+    startOnLoad: false,
+    baseAssetPath: "/",
+    onnxWASMBasePath: "/",
+    positiveSpeechThreshold: 0.5,
+    negativeSpeechThreshold: 0.35,
+    redemptionFrames: 8,
+    preSpeechPadFrames: 1,
+    minSpeechFrames: 3,
+    getStream: async () => {
+      console.log('🎤 VAD requesting microphone...');
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: { ideal: 16000 }
+          }
+        });
+        setStream(stream);
+        return stream;
+      } catch (err: any) {
+        if (err.name === 'OverconstrainedError') {
+          console.log('📱 Fallback audio');
+          const fallback = await navigator.mediaDevices.getUserMedia({ audio: true });
+          setStream(fallback);
+          return fallback;
+        }
+        throw err;
+      }
+    },
+    onSpeechStart: () => console.log('Speech started'),
+    onSpeechEnd: (audio) => {
+      if (status !== 'listening') return;
+      vad.pause();
+      const wavBlob = float32ToWav(audio);
+      processAudio(wavBlob);
+    },
+    onVADMisfire: () => console.log('VAD misfire'),
+  });
 
   // Cancel everything and reset to idle
   const cancelSession = useCallback(() => {
