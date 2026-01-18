@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
         const ttsStart = Date.now();
         
         let audioArrayBuffer: ArrayBuffer;
-        let audioFormat = 'mp3'; // Use MP3 for better browser compatibility
+        let audioFormat = 'wav'; // Groq only supports WAV format
         
         try {
             const speechResponse = await (groq.audio as any).speech.create({
@@ -157,15 +157,14 @@ export async function POST(req: NextRequest) {
                 throw new Error('Generated audio is empty');
             }
             
-            // Validate MP3 header (should start with 0xFF 0xFB or ID3)
-            const headerView = new Uint8Array(audioArrayBuffer.slice(0, 3));
-            const hasMP3Header = (headerView[0] === 0xFF && (headerView[1] & 0xE0) === 0xE0);
-            const hasID3Header = (String.fromCharCode(...headerView) === 'ID3');
+            // Validate WAV header (should start with 'RIFF')
+            const headerView = new Uint8Array(audioArrayBuffer.slice(0, 4));
+            const hasWAVHeader = (String.fromCharCode(...headerView) === 'RIFF');
             
-            if (!hasMP3Header && !hasID3Header) {
-                console.warn('⚠️ Audio may not be valid MP3 format');
+            if (!hasWAVHeader) {
+                console.warn('⚠️ Audio may not be valid WAV format');
             } else {
-                console.log('✅ Valid MP3 header detected');
+                console.log('✅ Valid WAV header detected');
             }
         } catch (error: any) {
             console.error('❌ TTS error:', error);
@@ -179,7 +178,7 @@ export async function POST(req: NextRequest) {
         // Return audio with metadata in headers
         return new NextResponse(audioArrayBuffer, {
             headers: {
-                'Content-Type': 'audio/mpeg',
+                'Content-Type': 'audio/wav',
                 'Content-Length': audioArrayBuffer.byteLength.toString(),
                 'X-Transcription': encodeURIComponent(transcribedText),
                 'X-Response-Text': encodeURIComponent(responseText),

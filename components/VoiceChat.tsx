@@ -229,7 +229,7 @@ export default function VoiceChat() {
           }
           
           // Create blob with explicit mime type from response headers
-          const contentType = response.headers.get('Content-Type') || 'audio/mpeg';
+          const contentType = response.headers.get('Content-Type') || 'audio/wav';
           const responseAudioBlob = new Blob([responseArrayBuffer], { type: contentType });
           
           console.log('🔊 Created audio blob:', {
