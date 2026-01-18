@@ -4,7 +4,7 @@ import { ChatGroq } from '@langchain/groq';
 import { HumanMessage, AIMessage, SystemMessage } from '@langchain/core/messages';
 
 // System prompt for the voice assistant
-const SYSTEM_PROMPT = "You are a helpful AI assistant engaged in a conversation with the user. Provide concise, natural responses suitable for voice interaction. Keep your responses brief and to the point.";
+const SYSTEM_PROMPT = `whenever you hear spanish translate to english, and vice versa. be a live translator`;
 
 export async function POST(req: NextRequest) {
     try {
@@ -32,11 +32,7 @@ export async function POST(req: NextRequest) {
 
         // 1. Transcribe Audio
         console.log('Step 1: Transcribing audio...');
-        const transcription = await groq.audio.transcriptions.create({
-            file: audioFile,
-            model: 'whisper-large-v3',
-            response_format: 'json',
-        });
+        const transcription = await groq.audio.transcriptions.create({\n            file: audioFile,\n            model: 'whisper-large-v3',\n            language: 'en',\n            response_format: 'json',\n        });
 
         const transcribedText = transcription.text;
         console.log('Transcription:', transcribedText);
@@ -49,7 +45,7 @@ export async function POST(req: NextRequest) {
         console.log('Step 2: Processing with LLM in chat mode...');
         const model = new ChatGroq({
             apiKey: process.env.GROQ_API_KEY,
-            model: 'llama-3.3-70b-versatile',
+            model: 'openai/gpt-oss-120b',
             temperature: 0.7,
         });
 
@@ -80,9 +76,7 @@ export async function POST(req: NextRequest) {
         const speechResponse = await (groq.audio as any).speech.create({
             model: 'canopylabs/orpheus-v1-english', 
             voice: 'daniel',
-            input: responseText,
-            response_format: 'wav',
-        });
+            input: responseText,\n            response_format: 'mp3',\n        });
 
         // Convert the response to a Buffer/ArrayBuffer and return as audio
         const arrayBuffer = await speechResponse.arrayBuffer();
