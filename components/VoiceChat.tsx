@@ -74,10 +74,10 @@ export default function VoiceChat() {
     });
   }, [audioContextUnlocked]);
 
-  // Auto-scroll to bottom of conversation
+  // Keep scroll at top (newest messages appear at top)
   useEffect(() => {
     if (conversationScrollRef.current) {
-      conversationScrollRef.current.scrollTop = conversationScrollRef.current.scrollHeight;
+      conversationScrollRef.current.scrollTop = 0;
     }
   }, [conversationHistory, currentTranscription, currentGeneration]);
 
@@ -119,11 +119,100 @@ export default function VoiceChat() {
         }
       };
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        setRecordedAudioBlob(audioBlob);
-        setStatus('ready_to_generate');
         console.log('🎤 Recording stopped, blob size:', audioBlob.size);
+        
+        // Auto-generate immediately after stopping
+        setRecordedAudioBlob(audioBlob);
+        
+        // Process the audio automatically
+        try {
+          setStatus('transcribing');
+          setIsProcessing(true);
+          setCurrentTranscription('');
+          setCurrentGeneration('');
+          setPermissionError(null);
+
+          const formData = new FormData();
+          formData.append('audio', audioBlob, 'input.webm');
+          formData.append('conversationHistory', JSON.stringify(conversationHistory));
+          
+          const response = await fetch('/api/voice', {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ error: 'Failed to process audio' }));
+            throw new Error(errorData.error || 'Failed to process audio');
+          }
+
+          // Get transcription and response text from headers
+          const transcription = decodeURIComponent(response.headers.get('X-Transcription') || '');
+          const responseText = decodeURIComponent(response.headers.get('X-Response-Text') || '');
+
+          // Show transcription
+          if (transcription) {
+            setStatus('thinking');
+            setCurrentTranscription(transcription);
+            await new Promise(resolve => setTimeout(resolve, 300));
+            addToConversation('user', transcription);
+            setCurrentTranscription('');
+          }
+
+          // Show generation text
+          setStatus('generating_audio');
+          if (responseText) {
+            setCurrentGeneration(responseText);
+            await new Promise(resolve => setTimeout(resolve, 300));
+            addToConversation('assistant', responseText);
+            setCurrentGeneration('');
+          }
+
+          // Get audio blob
+          const responseAudioBlob = await response.blob();
+          console.log('🔊 Received audio blob:', responseAudioBlob.size, 'bytes, type:', responseAudioBlob.type);
+          
+          // Revoke previous audio URL if exists
+          if (audioUrl) {
+            URL.revokeObjectURL(audioUrl);
+          }
+          
+          const url = URL.createObjectURL(responseAudioBlob);
+          setAudioUrl(url);
+          console.log('🔗 Created audio URL:', url);
+          
+          // Auto-play
+          if (audioRef.current) {
+            audioRef.current.src = url;
+            console.log('▶️ Attempting to play audio...');
+            
+            try {
+              await audioRef.current.play();
+              setIsPlayingAudio(true);
+              setStatus('speaking');
+              console.log('✅ Audio playing successfully');
+            } catch (error) {
+              console.error("❌ Autoplay failed:", error);
+              setPermissionError('Audio playback failed. Click to play manually.');
+              setStatus('idle');
+            }
+          } else {
+            console.error('❌ Audio ref not available');
+            setStatus('idle');
+          }
+          
+          // Clear recorded blob
+          setRecordedAudioBlob(null);
+          
+        } catch (error: any) {
+          console.error('Processing error:', error);
+          setPermissionError(error.message || 'Failed to process audio');
+          setStatus('idle');
+        } finally {
+          setIsProcessing(false);
+        }
       };
 
       mediaRecorderRef.current = mediaRecorder;
@@ -163,12 +252,13 @@ export default function VoiceChat() {
     }
   }, [setStatus, setIsListening, unlockAudio]);
 
-  // Stop recording
+  // Stop recording and auto-generate
   const stopRecording = useCallback(() => {
     console.log('🛑 Stopping recording...');
     
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
+      // Note: The onstop handler will set recordedAudioBlob and trigger auto-generation
     }
     
     if (recordingTimerRef.current) {
@@ -179,92 +269,7 @@ export default function VoiceChat() {
     setIsListening(false);
   }, [setIsListening]);
 
-  // Process recorded audio through API
-  const generateResponse = useCallback(async () => {
-    if (!recordedAudioBlob) {
-      console.error('No recorded audio to process');
-      return;
-    }
 
-    try {
-      setStatus('transcribing');
-      setIsProcessing(true);
-      setCurrentTranscription('');
-      setCurrentGeneration('');
-      setPermissionError(null);
-
-      const formData = new FormData();
-      formData.append('audio', recordedAudioBlob, 'input.webm');
-      formData.append('conversationHistory', JSON.stringify(conversationHistory));
-      
-      const response = await fetch('/api/voice', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Failed to process audio' }));
-        throw new Error(errorData.error || 'Failed to process audio');
-      }
-
-      // Get transcription and response text from headers
-      const transcription = decodeURIComponent(response.headers.get('X-Transcription') || '');
-      const responseText = decodeURIComponent(response.headers.get('X-Response-Text') || '');
-
-      // Show transcription
-      if (transcription) {
-        setStatus('thinking');
-        setCurrentTranscription(transcription);
-        await new Promise(resolve => setTimeout(resolve, 300));
-        addToConversation('user', transcription);
-        setCurrentTranscription('');
-      }
-
-      // Show generation text
-      setStatus('generating_audio');
-      if (responseText) {
-        setCurrentGeneration(responseText);
-        await new Promise(resolve => setTimeout(resolve, 300));
-        addToConversation('assistant', responseText);
-        setCurrentGeneration('');
-      }
-
-      // Get audio blob
-      const responseAudioBlob = await response.blob();
-      
-      // Revoke previous audio URL if exists
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl);
-      }
-      
-      const url = URL.createObjectURL(responseAudioBlob);
-      setAudioUrl(url);
-      
-      // Auto-play
-      if (audioRef.current) {
-        audioRef.current.src = url;
-        
-        try {
-          await audioRef.current.play();
-          setIsPlayingAudio(true);
-          setStatus('speaking');
-        } catch (error) {
-          console.error("Autoplay failed:", error);
-          setStatus('idle');
-        }
-      }
-      
-      // Clear recorded blob
-      setRecordedAudioBlob(null);
-      
-    } catch (error: any) {
-      console.error('Processing error:', error);
-      setPermissionError(error.message || 'Failed to process audio');
-      setStatus('ready_to_generate');
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [recordedAudioBlob, conversationHistory, audioUrl, setStatus, setIsPlayingAudio, addToConversation]);
 
   // Cancel/Reset everything
   const resetSession = useCallback(() => {
@@ -411,25 +416,7 @@ export default function VoiceChat() {
                   </button>
                 )}
 
-                {/* Ready to generate - Show Generate button */}
-                {status === 'ready_to_generate' && (
-                  <div className="flex flex-col gap-2 items-center">
-                    <button
-                      onClick={generateResponse}
-                      disabled={isProcessing}
-                      className="px-6 py-2.5 md:px-8 md:py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-zinc-700 disabled:cursor-not-allowed rounded-full text-white font-medium text-sm md:text-base shadow-lg transition-colors flex items-center gap-2"
-                    >
-                      <Send size={18} />
-                      GENERATE
-                    </button>
-                    <button
-                      onClick={resetSession}
-                      className="px-4 py-1.5 text-xs text-zinc-400 hover:text-white transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
+
 
                 {/* Processing states - Show status */}
                 {(status === 'transcribing' || status === 'thinking' || status === 'generating_audio' || status === 'speaking') && (
@@ -449,12 +436,32 @@ export default function VoiceChat() {
                 
                 <div 
                   ref={conversationScrollRef}
-                  className="flex-1 overflow-y-auto px-3 py-2 md:px-4 md:py-3 space-y-2 md:space-y-3 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent"
+                  className="flex-1 overflow-y-auto px-3 py-2 md:px-4 md:py-3 space-y-2 md:space-y-3 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent flex flex-col-reverse"
                 >
-                  {/* Past conversation history */}
-                  {conversationHistory.map((msg, idx) => (
+                  {/* Current generation (while generating) - Shows first (at top) */}
+                  {currentGeneration && (
+                    <div className="flex flex-col gap-0.5 md:gap-1 items-start animate-pulse">
+                      <span className="text-[10px] md:text-xs text-zinc-500 px-1">AI (generating...)</span>
+                      <div className="px-2.5 py-1.5 md:px-3 md:py-2 rounded-lg text-xs md:text-sm max-w-[90%] md:max-w-[85%] bg-purple-900/40 text-purple-100 border border-purple-700/50">
+                        {currentGeneration}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Current transcription (while transcribing) - Shows first (at top) */}
+                  {currentTranscription && (
+                    <div className="flex flex-col gap-0.5 md:gap-1 items-end animate-pulse">
+                      <span className="text-[10px] md:text-xs text-zinc-500 px-1">You (transcribing...)</span>
+                      <div className="px-2.5 py-1.5 md:px-3 md:py-2 rounded-lg text-xs md:text-sm max-w-[90%] md:max-w-[85%] bg-cyan-900/40 text-cyan-100 border border-cyan-700/50">
+                        {currentTranscription}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Past conversation history - Reversed (newest first) */}
+                  {[...conversationHistory].reverse().map((msg, idx) => (
                     <div 
-                      key={idx} 
+                      key={conversationHistory.length - 1 - idx} 
                       className={`flex flex-col gap-0.5 md:gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
                     >
                       <span className="text-[10px] md:text-xs text-zinc-500 px-1">
@@ -471,26 +478,6 @@ export default function VoiceChat() {
                       </div>
                     </div>
                   ))}
-                  
-                  {/* Current transcription (while transcribing) */}
-                  {currentTranscription && (
-                    <div className="flex flex-col gap-0.5 md:gap-1 items-end animate-pulse">
-                      <span className="text-[10px] md:text-xs text-zinc-500 px-1">You (transcribing...)</span>
-                      <div className="px-2.5 py-1.5 md:px-3 md:py-2 rounded-lg text-xs md:text-sm max-w-[90%] md:max-w-[85%] bg-cyan-900/40 text-cyan-100 border border-cyan-700/50">
-                        {currentTranscription}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Current generation (while generating) */}
-                  {currentGeneration && (
-                    <div className="flex flex-col gap-0.5 md:gap-1 items-start animate-pulse">
-                      <span className="text-[10px] md:text-xs text-zinc-500 px-1">AI (generating...)</span>
-                      <div className="px-2.5 py-1.5 md:px-3 md:py-2 rounded-lg text-xs md:text-sm max-w-[90%] md:max-w-[85%] bg-purple-900/40 text-purple-100 border border-purple-700/50">
-                        {currentGeneration}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             )}
