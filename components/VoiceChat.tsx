@@ -31,15 +31,27 @@ export default function VoiceChat() {
   const [currentTranscription, setCurrentTranscription] = useState<string>('');
   const [currentGeneration, setCurrentGeneration] = useState<string>('');
   const conversationScrollRef = useRef<HTMLDivElement>(null);
+  const vadInstanceRef = useRef<any>(null);
+  const processingRef = useRef(false);
 
-  // Cleanup object URLs
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
+      // Cleanup audio URLs
       if (audioUrl) {
         URL.revokeObjectURL(audioUrl);
       }
+      // Cleanup media stream
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+      // Stop audio playback
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+      }
     };
-  }, [audioUrl]);
+  }, [audioUrl, stream]);
 
   // Unlock audio context on user interaction
   const unlockAudio = () => {
@@ -62,15 +74,20 @@ export default function VoiceChat() {
 
   // Process audio through API
   const processAudio = async (audioBlob: Blob) => {
+    // Prevent concurrent processing
+    if (processingRef.current) {
+      console.warn('Already processing audio, skipping...');
+      return;
+    }
+
+    processingRef.current = true;
+
     try {
       setStatus('transcribing');
       setIsProcessing(true);
       setCurrentTranscription('');
       setCurrentGeneration('');
-
-      // Brief delay to show transcribing
-      await new Promise((resolve) => setTimeout(resolve, 800));
-      setStatus('thinking');
+      setPermissionError(null);
 
       const formData = new FormData();
       formData.append('audio', audioBlob, 'input.wav');
@@ -82,7 +99,7 @@ export default function VoiceChat() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({ error: 'Failed to process audio' }));
         throw new Error(errorData.error || 'Failed to process audio');
       }
 
@@ -90,11 +107,11 @@ export default function VoiceChat() {
       const transcription = decodeURIComponent(response.headers.get('X-Transcription') || '');
       const responseText = decodeURIComponent(response.headers.get('X-Response-Text') || '');
 
-      // Show transcription first
+      // Show transcription
       if (transcription) {
+        setStatus('thinking');
         setCurrentTranscription(transcription);
-        // Wait a bit to show transcription before moving to generation
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 300));
         addToConversation('user', transcription);
         setCurrentTranscription('');
       }
@@ -103,36 +120,63 @@ export default function VoiceChat() {
       setStatus('generating_audio');
       if (responseText) {
         setCurrentGeneration(responseText);
-        // Wait a bit to show generation before moving to speaking
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 300));
         addToConversation('assistant', responseText);
         setCurrentGeneration('');
       }
 
-      const audioBlob = await response.blob();
-      const url = URL.createObjectURL(audioBlob);
+      // Get audio blob
+      const responseAudioBlob = await response.blob();
+      
+      // Revoke previous audio URL if exists
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl);
+      }
+      
+      const url = URL.createObjectURL(responseAudioBlob);
       setAudioUrl(url);
       
       // Auto-play if audio context is unlocked
       if (audioContextUnlocked && audioRef.current) {
         audioRef.current.src = url;
-        audioRef.current.play().then(() => {
+        
+        try {
+          await audioRef.current.play();
           setIsPlayingAudio(true);
           setStatus('speaking');
-        }).catch(error => {
+        } catch (error) {
           console.error("Autoplay failed:", error);
-        });
+          // Fallback: return to listening state
+          setStatus('listening');
+          if (vadInstanceRef.current && isListening) {
+            vadInstanceRef.current.start();
+          }
+        }
+      } else {
+        // If audio context not unlocked, go back to listening
+        setStatus('listening');
+        if (vadInstanceRef.current && isListening) {
+          vadInstanceRef.current.start();
+        }
       }
     } catch (error: any) {
       console.error('Processing error:', error);
-      setPermissionError(error.message);
+      setPermissionError(error.message || 'Failed to process audio');
       setStatus('listening');
       setCurrentTranscription('');
       setCurrentGeneration('');
-      // Resume VAD if error
-      if (isListening) vad.start();
+      
+      // Resume VAD only if still in listening mode
+      if (vadInstanceRef.current && isListening && status === 'listening') {
+        try {
+          vadInstanceRef.current.start();
+        } catch (e) {
+          console.error('Failed to resume VAD:', e);
+        }
+      }
     } finally {
       setIsProcessing(false);
+      processingRef.current = false;
     }
   };
 
@@ -140,61 +184,76 @@ export default function VoiceChat() {
     startOnLoad: false,
     baseAssetPath: "/",
     onnxWASMBasePath: "/",
-    positiveSpeechThreshold: 0.5,
-    negativeSpeechThreshold: 0.35,
-    redemptionFrames: 8,
-    preSpeechPadFrames: 1,
-    minSpeechFrames: 3,
-    getStream: async () => {
-      console.log('🎤 VAD requesting microphone...');
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            sampleRate: { ideal: 16000 }
-          }
-        });
-        setStream(stream);
-        return stream;
-      } catch (err: any) {
-        if (err.name === 'OverconstrainedError') {
-          console.log('📱 Fallback audio');
-          const fallback = await navigator.mediaDevices.getUserMedia({ audio: true });
-          setStream(fallback);
-          return fallback;
-        }
-        throw err;
-      }
+    positiveSpeechThreshold: 0.6,
+    negativeSpeechThreshold: 0.4,
+    onSpeechStart: () => {
+      console.log('🗣️ Speech started');
     },
-    onSpeechStart: () => console.log('Speech started'),
     onSpeechEnd: (audio) => {
-      if (status !== 'listening') return;
-      vad.pause();
+      console.log('🛑 Speech ended, processing...');
+      
+      // Only process if we're in listening state and not already processing
+      if (status !== 'listening' || processingRef.current) {
+        console.log('Ignoring speech end - status:', status, 'processing:', processingRef.current);
+        return;
+      }
+
+      // Pause VAD immediately
+      if (vadInstanceRef.current) {
+        vadInstanceRef.current.pause();
+      }
+
+      // Convert and process audio
       const wavBlob = float32ToWav(audio);
       processAudio(wavBlob);
     },
-    onVADMisfire: () => console.log('VAD misfire'),
+    onVADMisfire: () => {
+      console.log('⚠️ VAD misfire');
+    },
   });
+
+  // Store VAD instance reference
+  useEffect(() => {
+    vadInstanceRef.current = vad;
+  }, [vad]);
 
   // Cancel everything and reset to idle
   const cancelSession = useCallback(() => {
-    vad.pause();
-    setIsListening(false);
+    console.log('🛑 Canceling session...');
     
-    // Clear stream reference (VAD will handle cleanup internally)
+    // Pause VAD
+    if (vadInstanceRef.current) {
+      try {
+        vadInstanceRef.current.pause();
+      } catch (e) {
+        console.error('Error pausing VAD:', e);
+      }
+    }
+    
+    // Stop and cleanup media stream
     if (stream) {
+      stream.getTracks().forEach(track => {
+        track.stop();
+        console.log('🔇 Stopped track:', track.kind);
+      });
       setStream(null);
     }
     
+    // Stop audio playback
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
     }
+    
+    // Reset all state
+    setIsListening(false);
     setIsPlayingAudio(false);
     setStatus('idle');
-  }, [vad, stream, setIsListening, setStatus, setIsPlayingAudio]);
+    setIsProcessing(false);
+    processingRef.current = false;
+    
+    console.log('✅ Session canceled');
+  }, [stream, setIsListening, setStatus, setIsPlayingAudio]);
 
   // Start/Stop Session
   const toggleSession = useCallback(async () => {
@@ -207,33 +266,43 @@ export default function VoiceChat() {
         // Unlock audio context on user interaction
         unlockAudio();
         
-        unlockAudio();
+        console.log('🎬 Requesting microphone access...');
         
-        console.log('🎬 Getting microphone stream...');
-        const mediaStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            sampleRate: { ideal: 16000 }
-          }
-        }).catch(async (err) => {
+        // Request microphone access with fallback
+        let mediaStream: MediaStream;
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              sampleRate: { ideal: 16000 }
+            }
+          });
+        } catch (err: any) {
           if (err.name === 'OverconstrainedError') {
-            console.log('📱 Fallback constraints');
-            return navigator.mediaDevices.getUserMedia({ audio: true });
+            console.log('📱 Using fallback audio constraints');
+            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          } else {
+            throw err;
           }
-          throw err;
-        });
+        }
         
         setStream(mediaStream);
-        vad.start(mediaStream);
+        
+        // Start VAD with the stream
+        if (vadInstanceRef.current) {
+          vadInstanceRef.current.start(mediaStream);
+        }
+        
         setIsListening(true);
         setStatus('listening');
         console.log('✅ Listening for speech...');
-      } catch (err: any) {
-        console.error("VAD start error:", err);
         
-        // Provide specific error messages based on error type
+      } catch (err: any) {
+        console.error("❌ Microphone access error:", err);
+        
+        // Provide specific error messages
         let errorMessage = 'Failed to start voice detection';
         
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
@@ -243,7 +312,7 @@ export default function VoiceChat() {
         } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
           errorMessage = 'Microphone is already in use by another application.';
         } else if (err.name === 'SecurityError') {
-          errorMessage = 'Security error: Microphone access requires HTTPS on mobile devices.';
+          errorMessage = 'Security error: Microphone access requires HTTPS.';
         } else if (err.message) {
           errorMessage = err.message;
         }
@@ -251,18 +320,35 @@ export default function VoiceChat() {
         setPermissionError(errorMessage);
         setStatus('idle');
         setIsListening(false);
+        
+        // Cleanup on error
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+          setStream(null);
+        }
       }
     }
-  }, [isListening, vad, setIsListening, setStatus]);
+  }, [isListening, cancelSession, setIsListening, setStatus, stream]);
 
   // Audio Ended Handler
   const handleAudioEnded = useCallback(() => {
+    console.log('🔊 Audio playback ended');
     setIsPlayingAudio(false);
-    setStatus('listening');
-    if (isListening) {
-      vad.start();
+    
+    // Only resume listening if we're still in listening mode
+    if (isListening && vadInstanceRef.current) {
+      setStatus('listening');
+      try {
+        vadInstanceRef.current.start();
+        console.log('🎤 Resumed listening');
+      } catch (e) {
+        console.error('Failed to resume VAD:', e);
+        setPermissionError('Failed to resume voice detection');
+      }
+    } else {
+      setStatus('idle');
     }
-  }, [isListening, setStatus, setIsPlayingAudio, vad]);
+  }, [isListening, setStatus, setIsPlayingAudio]);
 
   // Close modal handler with conversation wipe
   const closeModal = () => {
