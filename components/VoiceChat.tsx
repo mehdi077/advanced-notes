@@ -63,7 +63,7 @@ export default function VoiceChat() {
   // Process audio through API
   const processAudio = async (audioBlob: Blob) => {
     try {
-      setStatus('transcribing');\n      setIsProcessing(true);\n      setCurrentTranscription('');\n      setCurrentGeneration('');\n      await new Promise(r => setTimeout(r, 800));\n      setStatus('thinking');
+      setStatus('transcribing');\n      setIsProcessing(true);\n      setCurrentTranscription('');\n      setCurrentGeneration('');\n\n      // Brief delay to show transcribing\n      await new Promise(resolve => setTimeout(resolve, 800));\n      setStatus('thinking');
 
       const formData = new FormData();
       formData.append('audio', audioBlob, 'input.wav');
