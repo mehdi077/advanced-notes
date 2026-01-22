@@ -1,12 +1,16 @@
 import { ChatOpenAI } from '@langchain/openai';
 
-export type ModelId = 
+export type BuiltInModelId = 
   | 'openai/gpt-4o'
   | 'openai/gpt-4o-mini'
   | 'anthropic/claude-3.5-sonnet'
   | 'x-ai/grok-4.1-fast'
   | 'deepseek/deepseek-v3.2-exp'
   | 'meta-llama/llama-3.1-70b-instruct';
+
+// OpenRouter model ids are strings like "openai/gpt-4o-mini" or "liquid/lfm-2.5-1.2b-thinking:free".
+// We keep a built-in union for common models, but allow any valid OpenRouter model id.
+export type ModelId = BuiltInModelId | (string & {});
 
 export interface ModelPricing {
   prompt: number;  // Cost per 1M tokens
@@ -37,7 +41,7 @@ export function formatCost(cost: number): string {
 }
 
 // Default model - change this to use a different model throughout the project
-export const DEFAULT_MODEL: ModelId = 'openai/gpt-4o-mini';
+export const DEFAULT_MODEL: BuiltInModelId = 'openai/gpt-4o-mini';
 
 export function getOpenRouterModel(modelId: ModelId = DEFAULT_MODEL): ChatOpenAI {
   const apiKey = process.env.OPENROUTER_API_KEY;

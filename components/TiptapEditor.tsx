@@ -8,7 +8,7 @@ import { Highlight } from '@tiptap/extension-highlight';
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { debounce } from 'lodash';
-import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, Mic, Play, Pause, SkipBack, SkipForward, Database } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, Mic, Play, Pause, SkipBack, SkipForward, Database, Plus } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
 import { CompletionMark } from '@/lib/completion-mark';
@@ -25,6 +25,9 @@ const DEFAULT_REGEN_PROMPT_TEMPLATE = `This is the already generated text:
 
 Now generate a drastically  different path to the completion for the next attempt, very far deferent from the ones that are shown in the attempts above.
 {{ORIGINAL_PROMPT}}`;
+
+const STORAGE_SELECTED_MODEL_KEY = 'helm.selectedModel';
+const STORAGE_CUSTOM_MODELS_KEY = 'helm.customModels';
 
 const SILENT_WAV_DATA_URL =
   'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==';
@@ -66,6 +69,12 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
   const { setIsModalOpen } = useVoiceStore();
   const [selectedModel, setSelectedModel] = useState<ModelId>(DEFAULT_MODEL);
+  const [customModelIds, setCustomModelIds] = useState<string[]>([]);
+  const [hasLoadedModelPrefs, setHasLoadedModelPrefs] = useState(false);
+  const [isAddModelOpen, setIsAddModelOpen] = useState(false);
+  const [newModelId, setNewModelId] = useState('');
+  const [newModelError, setNewModelError] = useState<string | null>(null);
+  const newModelInputRef = useRef<HTMLInputElement | null>(null);
   const [isAutoCompleting, setIsAutoCompleting] = useState(false);
   const [autoCompleteError, setAutoCompleteError] = useState<string | null>(null);
   const [customPrompt, setCustomPrompt] = useState(DEFAULT_PROMPT);
@@ -121,6 +130,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const [ttsCurrentTime, setTtsCurrentTime] = useState(0);
   const [ttsDuration, setTtsDuration] = useState(0);
   const [ttsPlaybackRate, setTtsPlaybackRate] = useState(1);
+  const [autoGenerateTts, setAutoGenerateTts] = useState(true);
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
   const ttsAbortControllerRef = useRef<AbortController | null>(null);
   const ttsUnlockedRef = useRef(false);
@@ -151,6 +161,22 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   // Track if component is mounted (for portal SSR safety)
   const [isMounted, setIsMounted] = useState(false);
 
+  const allModels = useMemo(() => {
+    const builtIn = AVAILABLE_MODELS;
+    const builtInIds = new Set(builtIn.map(m => m.id));
+    const custom = customModelIds
+      .map(s => s.trim())
+      .filter(Boolean)
+      .filter(id => !builtInIds.has(id as ModelId))
+      .map((id) => ({
+        id: id as ModelId,
+        name: id,
+        description: 'Custom OpenRouter model',
+      }));
+
+    return [...builtIn, ...custom];
+  }, [customModelIds]);
+
   // Detect mobile viewport
   useEffect(() => {
     const checkMobile = () => {
@@ -165,6 +191,87 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+  // Load model preferences (selected model + custom models) from localStorage
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let initialCustom: string[] = [];
+    const rawCustom = window.localStorage.getItem(STORAGE_CUSTOM_MODELS_KEY);
+    if (rawCustom) {
+      try {
+        const parsed: unknown = JSON.parse(rawCustom);
+        if (Array.isArray(parsed)) {
+          initialCustom = parsed
+            .filter((v): v is string => typeof v === 'string')
+            .map(s => s.trim())
+            .filter(Boolean);
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const rawSelected = window.localStorage.getItem(STORAGE_SELECTED_MODEL_KEY);
+    const selected = rawSelected?.trim();
+    if (selected) {
+      setSelectedModel(selected as ModelId);
+      const isBuiltIn = AVAILABLE_MODELS.some(m => m.id === (selected as ModelId));
+      if (!isBuiltIn && !initialCustom.includes(selected)) {
+        initialCustom = [...initialCustom, selected];
+      }
+    }
+
+    // Dedupe while preserving order
+    const seen = new Set<string>();
+    const deduped = initialCustom.filter((id) => {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    setCustomModelIds(deduped);
+    setHasLoadedModelPrefs(true);
+  }, []);
+
+  // Persist selected model
+  useEffect(() => {
+    if (!hasLoadedModelPrefs || typeof window === 'undefined') return;
+    window.localStorage.setItem(STORAGE_SELECTED_MODEL_KEY, String(selectedModel));
+  }, [selectedModel, hasLoadedModelPrefs]);
+
+  // Persist custom models
+  useEffect(() => {
+    if (!hasLoadedModelPrefs || typeof window === 'undefined') return;
+    window.localStorage.setItem(STORAGE_CUSTOM_MODELS_KEY, JSON.stringify(customModelIds));
+  }, [customModelIds, hasLoadedModelPrefs]);
+
+  useEffect(() => {
+    if (!isAddModelOpen) return;
+    setNewModelError(null);
+    const t = window.setTimeout(() => newModelInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [isAddModelOpen]);
+
+  const addOpenRouterModel = useCallback(() => {
+    const id = newModelId.trim();
+    if (!id) {
+      setNewModelError('Model id is required');
+      return;
+    }
+
+    const isBuiltIn = AVAILABLE_MODELS.some(m => m.id === (id as ModelId));
+    if (!isBuiltIn) {
+      setCustomModelIds(prev => {
+        if (prev.includes(id)) return prev;
+        return [...prev, id];
+      });
+    }
+
+    setSelectedModel(id as ModelId);
+    setIsAddModelOpen(false);
+    setNewModelId('');
+    setNewModelError(null);
+  }, [newModelId]);
 
   // Handle Visual Viewport updates for sticky positioning
   useEffect(() => {
@@ -745,7 +852,9 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             setLastGenerationCost(null);
           }
 
-          generateTtsForCompletion(completionText);
+          if (autoGenerateTts) {
+            generateTtsForCompletion(completionText);
+          }
         }
       }
       
@@ -765,7 +874,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       setIsAutoCompleting(false);
       abortControllerRef.current = null;
     }
-  }, [editor, isAutoCompleting, getTextForCompletion, selectedModel, customPrompt, useRagContext, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio]);
+  }, [editor, isAutoCompleting, getTextForCompletion, selectedModel, customPrompt, useRagContext, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio, autoGenerateTts]);
 
   // Handle regeneration when Tab is pressed with no words selected
   const handleRegenerate = useCallback(async () => {
@@ -862,7 +971,9 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             setLastGenerationCost(null);
           }
 
-          generateTtsForCompletion(completionText);
+          if (autoGenerateTts) {
+            generateTtsForCompletion(completionText);
+          }
         }
       }
       
@@ -882,7 +993,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       setIsAutoCompleting(false);
       abortControllerRef.current = null;
     }
-  }, [editor, isAutoCompleting, completion, attemptHistory, getTextForCompletion, buildRegenPrompt, selectedModel, useRagContext, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio]);
+  }, [editor, isAutoCompleting, completion, attemptHistory, getTextForCompletion, buildRegenPrompt, selectedModel, useRagContext, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio, autoGenerateTts]);
 
   // Cancel ongoing generation
   const cancelGeneration = useCallback(() => {
@@ -1415,9 +1526,20 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
           
           {/* Model Selection */}
           <div className="flex flex-col gap-2">
-            <span className="text-sm text-zinc-400">Model</span>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-zinc-400">Model</span>
+              <button
+                type="button"
+                onClick={() => setIsAddModelOpen(true)}
+                className="inline-flex items-center gap-1 text-xs text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded px-2 py-1 transition-colors cursor-pointer"
+                title="Add an OpenRouter model by id"
+              >
+                <Plus size={14} />
+                Add
+              </button>
+            </div>
             <div className="flex flex-col gap-1">
-              {AVAILABLE_MODELS.map((model) => {
+              {allModels.map((model) => {
                 const pricing = modelPricing[model.id];
                 const isSelected = model.id === selectedModel;
                 return (
@@ -1536,6 +1658,30 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             </button>
             <div className="text-xs text-zinc-500">
               Have a conversation with the AI assistant using your voice
+            </div>
+          </div>
+
+          {/* TTS Settings */}
+          <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-zinc-400">Completion audio</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setAutoGenerateTts(v => {
+                    const next = !v;
+                    if (!next) cleanupTtsAudio();
+                    return next;
+                  });
+                }}
+                className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${autoGenerateTts ? 'bg-blue-600' : 'bg-zinc-700'}`}
+                title={autoGenerateTts ? 'Auto-generate audio enabled' : 'Auto-generate audio disabled'}
+              >
+                <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${autoGenerateTts ? 'translate-x-5' : 'translate-x-1'}`} />
+              </button>
+            </div>
+            <div className="text-xs text-zinc-500">
+              When enabled, audio is generated automatically after each completion.
             </div>
           </div>
         </div>
@@ -1947,6 +2093,72 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                 className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded transition-colors"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add OpenRouter Model Modal */}
+      {isAddModelOpen && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div
+            className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl max-w-lg w-full overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-zinc-700">
+              <h3 className="text-white font-semibold">Add OpenRouter model</h3>
+              <button
+                type="button"
+                onClick={() => { setIsAddModelOpen(false); setNewModelError(null); }}
+                className="p-1 rounded hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white"
+                title="Close"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 flex flex-col gap-2">
+              <label className="text-sm text-zinc-400">Model id</label>
+              <input
+                ref={newModelInputRef}
+                value={newModelId}
+                onChange={(e) => setNewModelId(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addOpenRouterModel();
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setIsAddModelOpen(false);
+                  }
+                }}
+                className="bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-zinc-500 font-mono"
+                placeholder="liquid/lfm-2.5-1.2b-thinking:free"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              {newModelError && (
+                <div className="text-xs text-red-400">{newModelError}</div>
+              )}
+              <div className="text-xs text-zinc-500">
+                Paste an OpenRouter model id. It will be saved locally and appear in the model list.
+              </div>
+            </div>
+            <div className="p-4 border-t border-zinc-700 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setIsAddModelOpen(false); setNewModelError(null); }}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={addOpenRouterModel}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
+              >
+                Add
               </button>
             </div>
           </div>

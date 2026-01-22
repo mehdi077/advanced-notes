@@ -81,7 +81,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const model = getOpenRouterModel((modelId as ModelId) || DEFAULT_MODEL);
+    const selectedModelId = (typeof modelId === 'string' && modelId.trim()) ? modelId.trim() : DEFAULT_MODEL;
+    const model = getOpenRouterModel(selectedModelId as ModelId);
 
     // Get RAG context (optional)
     const ragContext = useRagContext ? await getRAGContext(text) : '';
@@ -104,7 +105,7 @@ export async function POST(request: NextRequest) {
     const messages = [systemPrompt, userPrompt];
 
     console.log('\n========== API CALL ==========');
-    console.log('Model:', modelId || DEFAULT_MODEL);
+    console.log('Model:', selectedModelId);
     console.log('==============================\n');
     console.log('Client text (used as query + generation seed):', text);
     console.log('Prompt (custom/user):', userPromptText);
@@ -132,7 +133,7 @@ export async function POST(request: NextRequest) {
     const completionTokens = usage.completion_tokens || usage.output_tokens || 0;
 
     const requestPreview = {
-      model: (typeof modelId === 'string' && modelId) ? modelId : DEFAULT_MODEL,
+      model: selectedModelId,
       useRagContext,
       ragContext: ragContext || null,
       promptText: userPromptText,

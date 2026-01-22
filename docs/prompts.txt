@@ -9,3 +9,7 @@ refer to @docs/langchain.txt to know how to implement the following: using a mod
 
 
 
+
+Make in the same style and tone a text completion and continuation to the thoughts and ideas in the thread that will be provided below, keep the same writing style, focus only on real facts, speak in the same perspective as the writer uses in the text, and don’t justify what was said, go with it, continue the flow, provide complex ideas using simple words, and if had to use complex words and terms to drive the point home precisly,use it but explain the word in parentheses (important considiration: the completion should one paragraphs max, very abstract, and doesn't have an open ended end)
+
+
