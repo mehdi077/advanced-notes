@@ -8,7 +8,7 @@ import { Highlight } from '@tiptap/extension-highlight';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { debounce } from 'lodash';
-import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, Mic, Play, Square } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, Mic, Play, Square, Pause, SkipBack, SkipForward } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
 import { CompletionMark } from '@/lib/completion-mark';
@@ -80,6 +80,8 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const [isTtsLoading, setIsTtsLoading] = useState(false);
   const [isTtsPlaying, setIsTtsPlaying] = useState(false);
   const [ttsError, setTtsError] = useState<string | null>(null);
+  const [ttsCurrentTime, setTtsCurrentTime] = useState(0);
+  const [ttsDuration, setTtsDuration] = useState(0);
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
   const ttsAbortControllerRef = useRef<AbortController | null>(null);
   
@@ -411,7 +413,6 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     }
 
     try {
-      ttsAudioRef.current.currentTime = 0;
       await ttsAudioRef.current.play();
       setIsTtsPlaying(true);
       setTtsError(null);
@@ -419,6 +420,23 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       setTtsError('Playback failed. Please try again.');
     }
   }, [isTtsPlaying, ttsAudioUrl]);
+
+  const skipTtsBackward = useCallback(() => {
+    if (!ttsAudioRef.current) return;
+    ttsAudioRef.current.currentTime = Math.max(0, ttsAudioRef.current.currentTime - 5);
+  }, []);
+
+  const skipTtsForward = useCallback(() => {
+    if (!ttsAudioRef.current) return;
+    ttsAudioRef.current.currentTime = Math.min(ttsAudioRef.current.duration || 0, ttsAudioRef.current.currentTime + 5);
+  }, []);
+
+  const handleTtsSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!ttsAudioRef.current) return;
+    const time = parseFloat(e.target.value);
+    ttsAudioRef.current.currentTime = time;
+    setTtsCurrentTime(time);
+  }, []);
 
   // Fetch balance, pricing, and prompts on mount
   useEffect(() => {
@@ -1032,20 +1050,9 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               <span className="text-green-300 font-mono">${lastGenerationCost.toFixed(6)}</span>
             </>
           )}
-          {(isTtsLoading || ttsAudioUrl) && (
+          {isTtsLoading && (
             <div className="flex items-center gap-1 ml-1">
-              {isTtsLoading ? (
-                <Loader2 size={14} className="animate-spin text-white" />
-              ) : (
-                <button
-                  type="button"
-                  onClick={toggleTtsPlayback}
-                  className="p-1 rounded bg-blue-500/80 hover:bg-blue-500 text-white transition-colors"
-                  title={isTtsPlaying ? 'Stop preview' : 'Play preview'}
-                >
-                  {isTtsPlaying ? <Square size={14} /> : <Play size={14} />}
-                </button>
-              )}
+              <Loader2 size={14} className="animate-spin text-white" />
             </div>
           )}
           {/* Desktop-only shortcuts hints */}
@@ -1068,6 +1075,61 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       {ttsError && completion.isActive && (
         <div className="fixed left-1/2 -translate-x-1/2 top-14 z-[69] text-[11px] md:text-xs text-amber-200 bg-zinc-900 px-2 py-1 rounded border border-amber-500/50 shadow-lg">
           {ttsError}
+        </div>
+      )}
+
+      {/* TTS Audio Control Panel */}
+      {ttsAudioUrl && completion.isActive && (
+        <div className="fixed left-1/2 -translate-x-1/2 top-14 z-[69] bg-zinc-900 border border-zinc-700 rounded-lg shadow-lg px-3 py-2 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={skipTtsBackward}
+            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+            title="Back 5s"
+          >
+            <SkipBack size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={toggleTtsPlayback}
+            className="p-2 rounded-full bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+            title={isTtsPlaying ? 'Pause' : 'Play'}
+          >
+            {isTtsPlaying ? <Pause size={18} /> : <Play size={18} />}
+          </button>
+          <button
+            type="button"
+            onClick={skipTtsForward}
+            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+            title="Forward 5s"
+          >
+            <SkipForward size={16} />
+          </button>
+          <div className="flex items-center gap-2 ml-1">
+            <span className="text-xs text-zinc-400 w-10 text-right">
+              {Math.floor(ttsCurrentTime / 60)}:{String(Math.floor(ttsCurrentTime % 60)).padStart(2, '0')}
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={ttsDuration || 0}
+              step={0.1}
+              value={ttsCurrentTime}
+              onChange={handleTtsSeek}
+              className="w-24 md:w-32 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+            />
+            <span className="text-xs text-zinc-400 w-10">
+              {Math.floor(ttsDuration / 60)}:{String(Math.floor(ttsDuration % 60)).padStart(2, '0')}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={cleanupTtsAudio}
+            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-red-400 transition-colors ml-1"
+            title="Close"
+          >
+            <X size={16} />
+          </button>
         </div>
       )}
 
@@ -1357,9 +1419,11 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
           <audio
             ref={ttsAudioRef}
             src={ttsAudioUrl}
-            onEnded={() => setIsTtsPlaying(false)}
+            onEnded={() => { setIsTtsPlaying(false); setTtsCurrentTime(0); }}
             onPause={() => setIsTtsPlaying(false)}
             onPlay={() => setIsTtsPlaying(true)}
+            onTimeUpdate={(e) => setTtsCurrentTime(e.currentTarget.currentTime)}
+            onLoadedMetadata={(e) => setTtsDuration(e.currentTarget.duration)}
             onError={() => setTtsError('Audio playback error')}
             className="hidden"
           />
