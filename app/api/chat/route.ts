@@ -3,7 +3,7 @@ import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from '@langchain/
 import { getOpenRouterModel, DEFAULT_MODEL, ModelId } from '@/lib/model-config';
 import db from '@/lib/db';
 
-const EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
+const DEFAULT_EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
 const TOP_K = 3;
 
 type ChatRole = 'user' | 'assistant';
@@ -12,7 +12,7 @@ interface ChatMessageDTO {
   content: string;
 }
 
-async function getEmbedding(text: string): Promise<number[]> {
+async function getEmbedding(text: string, embeddingModelId: string): Promise<number[]> {
   const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
     method: 'POST',
     headers: {
@@ -21,7 +21,7 @@ async function getEmbedding(text: string): Promise<number[]> {
       'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
     },
     body: JSON.stringify({
-      model: EMBEDDING_MODEL,
+      model: embeddingModelId,
       input: text,
     }),
   });
@@ -43,12 +43,14 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-async function getRAGContext(query: string): Promise<string> {
+async function getRAGContext(query: string, embeddingModelId: string): Promise<string> {
   try {
-    const queryEmbedding = await getEmbedding(query);
+    const queryEmbedding = await getEmbedding(query, embeddingModelId);
     if (queryEmbedding.length === 0) return '';
 
-    const rows = db.prepare('SELECT chunk_text, embedding FROM embeddings').all() as {
+    const rows = db
+      .prepare('SELECT chunk_text, embedding FROM embeddings WHERE embedding_model_id = ?')
+      .all(embeddingModelId) as {
       chunk_text: string;
       embedding: Buffer;
     }[];
@@ -81,6 +83,7 @@ export async function POST(request: NextRequest) {
 
     const body = (await request.json()) as Record<string, unknown>;
     const modelIdRaw = body.modelId;
+    const embeddingModelIdRaw = body.embeddingModelId;
     const useRagContext = body.useRagContext !== false;
     const messagesRaw = body.messages;
 
@@ -106,8 +109,13 @@ export async function POST(request: NextRequest) {
       typeof modelIdRaw === 'string' && modelIdRaw.trim() ? modelIdRaw.trim() : DEFAULT_MODEL;
     const model = getOpenRouterModel(selectedModelId as ModelId);
 
+    const embeddingModelId =
+      typeof embeddingModelIdRaw === 'string' && embeddingModelIdRaw.trim()
+        ? embeddingModelIdRaw.trim()
+        : DEFAULT_EMBEDDING_MODEL;
+
     const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
-    const ragContext = useRagContext && lastUserMessage ? await getRAGContext(lastUserMessage) : '';
+    const ragContext = useRagContext && lastUserMessage ? await getRAGContext(lastUserMessage, embeddingModelId) : '';
 
     let systemPromptContent =
       'You are a helpful assistant. Be concise and correct. If the user asks about the document, use the provided context.';
@@ -133,6 +141,7 @@ export async function POST(request: NextRequest) {
       message: { role: 'assistant', content },
       model: selectedModelId,
       useRagContext,
+      embeddingModelId,
       ragContext: ragContext || null,
     });
   } catch (error) {

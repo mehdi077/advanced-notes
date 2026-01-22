@@ -32,6 +32,9 @@ const STORAGE_CUSTOM_MODELS_KEY = 'helm.customModels';
 const SILENT_WAV_DATA_URL =
   'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==';
 
+const DEFAULT_EMBEDDING_MODEL_ID = 'qwen/qwen3-embedding-8b';
+const STORAGE_EMBEDDING_MODEL_KEY = 'helm.embeddingModelId';
+
 interface CompletionState {
   isActive: boolean;
   words: string[];
@@ -56,6 +59,7 @@ interface ModelPricingMap {
 interface AutocompleteRequestPreview {
   model: string;
   useRagContext: boolean;
+  embeddingModelId?: string;
   ragContext: string | null;
   promptText: string;
   inputText: string;
@@ -99,9 +103,13 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const [promptsLoaded, setPromptsLoaded] = useState(false);
 
   // RAG embedding state
-  const [ragStatus, setRagStatus] = useState<{ percentage: number; totalChunks: number; embeddedChunks: number; needsUpdate: boolean } | null>(null);
+  const [ragStatus, setRagStatus] = useState<{ embeddingModelId: string; availableEmbeddingModels: string[]; percentage: number; totalChunks: number; embeddedChunks: number; needsUpdate: boolean } | null>(null);
   const [isEmbedding, setIsEmbedding] = useState(false);
   const [embeddingError, setEmbeddingError] = useState<string | null>(null);
+  const [embeddingModelId, setEmbeddingModelId] = useState<string>(DEFAULT_EMBEDDING_MODEL_ID);
+  const [isAddEmbeddingModelOpen, setIsAddEmbeddingModelOpen] = useState(false);
+  const [newEmbeddingModelId, setNewEmbeddingModelId] = useState('');
+  const [embeddingModelError, setEmbeddingModelError] = useState<string | null>(null);
 
   const [useRagContext, setUseRagContext] = useState(true);
   const [lastRequestPreview, setLastRequestPreview] = useState<AutocompleteRequestPreview | null>(null);
@@ -476,26 +484,27 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   }, [savePrompts]);
 
   // Fetch RAG embedding status
-  const fetchRagStatus = useCallback(async () => {
+  const fetchRagStatus = useCallback(async (modelOverride?: string) => {
+    const modelId = modelOverride || embeddingModelId;
     try {
-      const response = await fetch('/api/embeddings');
+      const response = await fetch(`/api/embeddings?modelId=${encodeURIComponent(modelId)}`);
       if (response.ok) {
         const data = await response.json();
-        setRagStatus(data);
+        setRagStatus(data as { embeddingModelId: string; availableEmbeddingModels: string[]; percentage: number; totalChunks: number; embeddedChunks: number; needsUpdate: boolean });
       }
     } catch (error) {
       console.error('Failed to fetch RAG status:', error);
     }
-  }, []);
+  }, [embeddingModelId]);
 
   // Embed document chunks
   const embedDocument = useCallback(async () => {
     setIsEmbedding(true);
     setEmbeddingError(null);
     try {
-      const response = await fetch('/api/embeddings', { method: 'POST' });
+      const response = await fetch(`/api/embeddings?modelId=${encodeURIComponent(embeddingModelId)}`, { method: 'POST' });
       if (response.ok) {
-        await fetchRagStatus();
+        await fetchRagStatus(embeddingModelId);
       } else {
         const data = await response.json();
         setEmbeddingError(data.error || 'Failed to embed');
@@ -505,7 +514,58 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     } finally {
       setIsEmbedding(false);
     }
-  }, [fetchRagStatus]);
+  }, [fetchRagStatus, embeddingModelId]);
+
+  const registerEmbeddingModel = useCallback(async () => {
+    const id = newEmbeddingModelId.trim();
+    if (!id) {
+      setEmbeddingModelError('Model id is required');
+      return;
+    }
+    setEmbeddingModelError(null);
+    try {
+      const response = await fetch('/api/embeddings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelId: id }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error((data as { error?: string }).error || 'Failed to add model');
+      }
+      setEmbeddingModelId(id);
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(STORAGE_EMBEDDING_MODEL_KEY, id);
+      }
+      setIsAddEmbeddingModelOpen(false);
+      setNewEmbeddingModelId('');
+      await fetchRagStatus(id);
+    } catch (e: unknown) {
+      const msg =
+        (typeof (e as { message?: unknown })?.message === 'string' && (e as { message: string }).message) ||
+        'Failed to add model';
+      setEmbeddingModelError(msg);
+    }
+  }, [newEmbeddingModelId, fetchRagStatus]);
+
+  const deleteEmbeddingsForModel = useCallback(async () => {
+    const ok = typeof window === 'undefined' ? false : window.confirm(`Delete all embeddings for model:\n\n${embeddingModelId}\n\nThis cannot be undone.`);
+    if (!ok) return;
+    setEmbeddingError(null);
+    try {
+      const response = await fetch(`/api/embeddings?modelId=${encodeURIComponent(embeddingModelId)}`, { method: 'DELETE' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((data as { error?: string }).error || 'Failed to delete embeddings');
+      }
+      await fetchRagStatus(embeddingModelId);
+    } catch (e: unknown) {
+      const msg =
+        (typeof (e as { message?: unknown })?.message === 'string' && (e as { message: string }).message) ||
+        'Failed to delete embeddings';
+      setEmbeddingError(msg);
+    }
+  }, [embeddingModelId, fetchRagStatus]);
 
   const cleanupTtsAudio = useCallback(() => {
     if (ttsAbortControllerRef.current) {
@@ -687,6 +747,25 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     fetchRagStatus();
   }, [fetchBalance, fetchModelPricing, fetchPrompts, fetchRagStatus]);
 
+  // Load selected embedding model from localStorage
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem(STORAGE_EMBEDDING_MODEL_KEY);
+    if (saved && saved.trim()) {
+      setEmbeddingModelId(saved.trim());
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(STORAGE_EMBEDDING_MODEL_KEY, embeddingModelId);
+  }, [embeddingModelId]);
+
+  useEffect(() => {
+    // refresh status when the selected embedding model changes
+    void fetchRagStatus(embeddingModelId);
+  }, [embeddingModelId, fetchRagStatus]);
+
   useEffect(() => {
     const audio = ttsAudioRef.current;
     return () => {
@@ -794,7 +873,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       const response = await fetch('/api/autocomplete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, modelId: selectedModel, prompt: customPrompt, useRagContext }),
+        body: JSON.stringify({ text, modelId: selectedModel, prompt: customPrompt, useRagContext, embeddingModelId }),
         signal: abortControllerRef.current.signal,
       });
 
@@ -874,7 +953,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       setIsAutoCompleting(false);
       abortControllerRef.current = null;
     }
-  }, [editor, isAutoCompleting, getTextForCompletion, selectedModel, customPrompt, useRagContext, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio, autoGenerateTts]);
+  }, [editor, isAutoCompleting, getTextForCompletion, selectedModel, customPrompt, useRagContext, embeddingModelId, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio, autoGenerateTts]);
 
   // Handle regeneration when Tab is pressed with no words selected
   const handleRegenerate = useCallback(async () => {
@@ -914,7 +993,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       const response = await fetch('/api/autocomplete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, modelId: selectedModel, prompt: regenPrompt, useRagContext }),
+        body: JSON.stringify({ text, modelId: selectedModel, prompt: regenPrompt, useRagContext, embeddingModelId }),
         signal: abortControllerRef.current.signal,
       });
 
@@ -993,7 +1072,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       setIsAutoCompleting(false);
       abortControllerRef.current = null;
     }
-  }, [editor, isAutoCompleting, completion, attemptHistory, getTextForCompletion, buildRegenPrompt, selectedModel, useRagContext, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio, autoGenerateTts]);
+  }, [editor, isAutoCompleting, completion, attemptHistory, getTextForCompletion, buildRegenPrompt, selectedModel, useRagContext, embeddingModelId, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio, autoGenerateTts]);
 
   // Cancel ongoing generation
   const cancelGeneration = useCallback(() => {
@@ -1454,12 +1533,51 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               </span>
               <button
                 type="button"
-                onClick={fetchRagStatus}
+                onClick={() => { void fetchRagStatus(); }}
                 className="p-1 hover:bg-zinc-700 rounded transition-colors cursor-pointer"
                 title="Refresh status"
               >
                 <RefreshCw size={14} />
               </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex-1">
+                <div className="text-[11px] text-zinc-500 mb-1">Embedding model</div>
+                <select
+                  value={embeddingModelId}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setEmbeddingModelId(next);
+                    void fetchRagStatus(next);
+                  }}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-zinc-500 font-mono"
+                >
+                  {Array.from(new Set([embeddingModelId, ...(ragStatus?.availableEmbeddingModels || [DEFAULT_EMBEDDING_MODEL_ID])]))
+                    .filter(Boolean)
+                    .map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-2 pt-5">
+                <button
+                  type="button"
+                  onClick={() => { setIsAddEmbeddingModelOpen(true); setEmbeddingModelError(null); }}
+                  className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs text-zinc-200 transition-colors cursor-pointer"
+                  title="Add embedding model"
+                >
+                  Add
+                </button>
+                <button
+                  type="button"
+                  onClick={deleteEmbeddingsForModel}
+                  className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs text-red-300 hover:text-red-200 transition-colors cursor-pointer"
+                  title="Delete embeddings for this model"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
             
             {ragStatus && (
@@ -2153,6 +2271,71 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               <button
                 type="button"
                 onClick={addOpenRouterModel}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Embedding Model Modal */}
+      {isAddEmbeddingModelOpen && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div
+            className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl max-w-lg w-full overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-zinc-700">
+              <h3 className="text-white font-semibold">Add embedding model</h3>
+              <button
+                type="button"
+                onClick={() => { setIsAddEmbeddingModelOpen(false); setEmbeddingModelError(null); }}
+                className="p-1 rounded hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white"
+                title="Close"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 flex flex-col gap-2">
+              <label className="text-sm text-zinc-400">OpenRouter embedding model id</label>
+              <input
+                value={newEmbeddingModelId}
+                onChange={(e) => setNewEmbeddingModelId(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void registerEmbeddingModel();
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setIsAddEmbeddingModelOpen(false);
+                  }
+                }}
+                className="bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-zinc-500 font-mono"
+                placeholder="qwen/qwen3-embedding-8b"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              {embeddingModelError && (
+                <div className="text-xs text-red-400">{embeddingModelError}</div>
+              )}
+              <div className="text-xs text-zinc-500">
+                This creates a separate embedding index for the same document. Switch models to see per-model progress.
+              </div>
+            </div>
+            <div className="p-4 border-t border-zinc-700 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setIsAddEmbeddingModelOpen(false); setEmbeddingModelError(null); }}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => { void registerEmbeddingModel(); }}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
               >
                 Add

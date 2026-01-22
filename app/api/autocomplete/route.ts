@@ -3,10 +3,10 @@ import { getOpenRouterModel, DEFAULT_MODEL, ModelId } from '@/lib/model-config';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import db from '@/lib/db';
 
-const EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
+const DEFAULT_EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
 const TOP_K = 3;
 
-async function getEmbedding(text: string): Promise<number[]> {
+async function getEmbedding(text: string, embeddingModelId: string): Promise<number[]> {
   const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
     method: 'POST',
     headers: {
@@ -15,7 +15,7 @@ async function getEmbedding(text: string): Promise<number[]> {
       'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
     },
     body: JSON.stringify({
-      model: EMBEDDING_MODEL,
+      model: embeddingModelId,
       input: text,
     }),
   });
@@ -35,13 +35,16 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-async function getRAGContext(query: string): Promise<string> {
+async function getRAGContext(query: string, embeddingModelId: string): Promise<string> {
   try {
-    const queryEmbedding = await getEmbedding(query);
+    const queryEmbedding = await getEmbedding(query, embeddingModelId);
     if (queryEmbedding.length === 0) return '';
 
-    const rows = db.prepare('SELECT chunk_text, embedding FROM embeddings').all() as { 
-      chunk_text: string; embedding: Buffer;
+    const rows = db
+      .prepare('SELECT chunk_text, embedding FROM embeddings WHERE embedding_model_id = ?')
+      .all(embeddingModelId) as {
+      chunk_text: string;
+      embedding: Buffer;
     }[];
     if (rows.length === 0) return '';
 
@@ -71,6 +74,7 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as Record<string, unknown>;
     const text = body.text;
     const modelId = body.modelId;
+    const embeddingModelIdRaw = body.embeddingModelId;
     const prompt = body.prompt;
     const useRagContext = body.useRagContext !== false;
 
@@ -84,8 +88,13 @@ export async function POST(request: NextRequest) {
     const selectedModelId = (typeof modelId === 'string' && modelId.trim()) ? modelId.trim() : DEFAULT_MODEL;
     const model = getOpenRouterModel(selectedModelId as ModelId);
 
+    const embeddingModelId =
+      (typeof embeddingModelIdRaw === 'string' && embeddingModelIdRaw.trim())
+        ? embeddingModelIdRaw.trim()
+        : DEFAULT_EMBEDDING_MODEL;
+
     // Get RAG context (optional)
-    const ragContext = useRagContext ? await getRAGContext(text) : '';
+    const ragContext = useRagContext ? await getRAGContext(text, embeddingModelId) : '';
 
     let systemPromptContent = 'You are a writing assistant. Your task is to continue the user\'s text naturally. ' +
       'Respond with ONLY the completion text, nothing else. ' +
@@ -109,6 +118,7 @@ export async function POST(request: NextRequest) {
     console.log('==============================\n');
     console.log('Client text (used as query + generation seed):', text);
     console.log('Prompt (custom/user):', userPromptText);
+    console.log('Embedding model:', embeddingModelId);
     console.log('RAG context included:', ragContext ? 'YES' : 'NO');
     if (ragContext) {
       console.log('---RAG CONTEXT START---\n' + ragContext + '\n---RAG CONTEXT END---');
@@ -135,6 +145,7 @@ export async function POST(request: NextRequest) {
     const requestPreview = {
       model: selectedModelId,
       useRagContext,
+      embeddingModelId,
       ragContext: ragContext || null,
       promptText: userPromptText,
       inputText: text,

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import db from '@/lib/db';
 import crypto from 'crypto';
 
-const EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
+const DEFAULT_EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
 const CHUNK_SIZE = 500; // characters per chunk
 
 const FALLBACK_DOC_IDS = ['infinite-doc-v1', 'main'];
@@ -77,7 +77,7 @@ function extractPlainTextFromDocumentContent(content: string): string {
   }
 }
 
-async function getEmbedding(text: string): Promise<number[]> {
+async function getEmbedding(text: string, embeddingModelId: string): Promise<number[]> {
   const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
     method: 'POST',
     headers: {
@@ -86,7 +86,7 @@ async function getEmbedding(text: string): Promise<number[]> {
       'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
     },
     body: JSON.stringify({
-      model: EMBEDDING_MODEL,
+      model: embeddingModelId,
       input: text,
     }),
   });
@@ -100,11 +100,29 @@ async function getEmbedding(text: string): Promise<number[]> {
   return data.data[0].embedding;
 }
 
+function ensureEmbeddingModelRegistered(modelId: string) {
+  db.prepare('INSERT OR IGNORE INTO embedding_models (model_id) VALUES (?)').run(modelId);
+}
+
+function listEmbeddingModels(): string[] {
+  const rows = db.prepare('SELECT model_id FROM embedding_models ORDER BY created_at ASC').all() as Array<{ model_id: string }>;
+  const models = rows.map(r => r.model_id).filter(Boolean);
+  if (!models.includes(DEFAULT_EMBEDDING_MODEL)) {
+    ensureEmbeddingModelRegistered(DEFAULT_EMBEDDING_MODEL);
+    return [DEFAULT_EMBEDDING_MODEL, ...models];
+  }
+  return models;
+}
+
 // GET - Get embedding status
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const docId = searchParams.get('id');
+    const modelIdParam = searchParams.get('modelId');
+    const embeddingModelId = (modelIdParam && modelIdParam.trim()) ? modelIdParam.trim() : DEFAULT_EMBEDDING_MODEL;
+
+    ensureEmbeddingModelRegistered(embeddingModelId);
     const content = getDocumentContent(docId);
     const textContent = extractPlainTextFromDocumentContent(content);
 
@@ -113,7 +131,7 @@ export async function GET(request: NextRequest) {
     
     // Get chunk hashes that are already embedded
     const existingHashes = new Set(
-      (db.prepare('SELECT chunk_hash FROM embeddings').all() as { chunk_hash: string }[])
+      (db.prepare('SELECT chunk_hash FROM embeddings WHERE embedding_model_id = ?').all(embeddingModelId) as { chunk_hash: string }[])
         .map(row => row.chunk_hash)
     );
     
@@ -127,7 +145,22 @@ export async function GET(request: NextRequest) {
 
     const percentage = totalChunks > 0 ? Math.round((embeddedCurrentChunks / totalChunks) * 100) : 0;
 
+    const availableEmbeddingModels = listEmbeddingModels();
+
+    // Best-effort state row (kept for debugging / future use)
+    db.prepare(
+      'INSERT OR REPLACE INTO embedding_state (embedding_model_id, last_content_hash, total_chunks, embedded_chunks, updated_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(
+      embeddingModelId,
+      hashText(textContent),
+      totalChunks,
+      embeddedCurrentChunks,
+      new Date().toISOString()
+    );
+
     return NextResponse.json({
+      embeddingModelId,
+      availableEmbeddingModels,
       totalChunks,
       embeddedChunks: embeddedCurrentChunks,
       percentage,
@@ -139,6 +172,39 @@ export async function GET(request: NextRequest) {
   }
 }
 
+// PUT - Register a new embedding model (no embedding yet)
+export async function PUT(request: NextRequest) {
+  try {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const modelIdRaw = body.modelId;
+    if (typeof modelIdRaw !== 'string' || !modelIdRaw.trim()) {
+      return NextResponse.json({ error: 'modelId is required' }, { status: 400 });
+    }
+    const embeddingModelId = modelIdRaw.trim();
+    ensureEmbeddingModelRegistered(embeddingModelId);
+
+    // Initialize state row so UI can show 0% immediately
+    const { searchParams } = new URL(request.url);
+    const docId = searchParams.get('id');
+    const content = getDocumentContent(docId);
+    const textContent = extractPlainTextFromDocumentContent(content);
+    const chunks = chunkText(textContent);
+    const totalChunks = chunks.length;
+
+    db.prepare(
+      'INSERT OR IGNORE INTO embedding_state (embedding_model_id, last_content_hash, total_chunks, embedded_chunks, updated_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(embeddingModelId, hashText(textContent), totalChunks, 0, new Date().toISOString());
+
+    return NextResponse.json({
+      embeddingModelId,
+      availableEmbeddingModels: listEmbeddingModels(),
+    });
+  } catch (error) {
+    console.error('Embedding model register error:', error);
+    return NextResponse.json({ error: 'Failed to register model' }, { status: 500 });
+  }
+}
+
 // POST - Embed new chunks
 export async function POST(request: NextRequest) {
   try {
@@ -147,6 +213,9 @@ export async function POST(request: NextRequest) {
     }
     const { searchParams } = new URL(request.url);
     const docId = searchParams.get('id');
+    const modelIdParam = searchParams.get('modelId');
+    const embeddingModelId = (modelIdParam && modelIdParam.trim()) ? modelIdParam.trim() : DEFAULT_EMBEDDING_MODEL;
+    ensureEmbeddingModelRegistered(embeddingModelId);
     const content = getDocumentContent(docId);
     const textContent = extractPlainTextFromDocumentContent(content);
 
@@ -154,7 +223,7 @@ export async function POST(request: NextRequest) {
     
     // Get existing chunk hashes
     const existingHashes = new Set(
-      (db.prepare('SELECT chunk_hash FROM embeddings').all() as { chunk_hash: string }[])
+      (db.prepare('SELECT chunk_hash FROM embeddings WHERE embedding_model_id = ?').all(embeddingModelId) as { chunk_hash: string }[])
         .map(row => row.chunk_hash)
     );
 
@@ -173,20 +242,32 @@ export async function POST(request: NextRequest) {
 
     // Embed new chunks
     const insertStmt = db.prepare(
-      'INSERT OR IGNORE INTO embeddings (chunk_text, chunk_hash, embedding) VALUES (?, ?, ?)'
+      'INSERT OR IGNORE INTO embeddings (embedding_model_id, chunk_text, chunk_hash, embedding) VALUES (?, ?, ?, ?)'
     );
 
     let embedded = 0;
     for (const chunk of newChunks) {
       try {
-        const embedding = await getEmbedding(chunk.text);
+        const embedding = await getEmbedding(chunk.text, embeddingModelId);
         const embeddingBuffer = Buffer.from(new Float32Array(embedding).buffer);
-        insertStmt.run(chunk.text, chunk.hash, embeddingBuffer);
+        insertStmt.run(embeddingModelId, chunk.text, chunk.hash, embeddingBuffer);
         embedded++;
       } catch (error) {
         console.error('Failed to embed chunk:', error);
       }
     }
+
+    const allHashesAfter = new Set(
+      (db.prepare('SELECT chunk_hash FROM embeddings WHERE embedding_model_id = ?').all(embeddingModelId) as { chunk_hash: string }[])
+        .map(row => row.chunk_hash)
+    );
+    let embeddedCurrentChunks = 0;
+    for (const chunk of chunks) {
+      if (allHashesAfter.has(hashText(chunk))) embeddedCurrentChunks++;
+    }
+    db.prepare(
+      'INSERT OR REPLACE INTO embedding_state (embedding_model_id, last_content_hash, total_chunks, embedded_chunks, updated_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(embeddingModelId, hashText(textContent), chunks.length, embeddedCurrentChunks, new Date().toISOString());
 
     return NextResponse.json({ 
       message: `Embedded ${embedded} new chunks`,
@@ -196,5 +277,27 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Embedding error:', error);
     return NextResponse.json({ error: 'Failed to embed' }, { status: 500 });
+  }
+}
+
+// DELETE - Delete embeddings for a model (keeps the model registered)
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const modelIdParam = searchParams.get('modelId');
+    const embeddingModelId = (modelIdParam && modelIdParam.trim()) ? modelIdParam.trim() : '';
+    if (!embeddingModelId) {
+      return NextResponse.json({ error: 'modelId is required' }, { status: 400 });
+    }
+
+    db.prepare('DELETE FROM embeddings WHERE embedding_model_id = ?').run(embeddingModelId);
+    db.prepare(
+      'INSERT OR REPLACE INTO embedding_state (embedding_model_id, last_content_hash, total_chunks, embedded_chunks, updated_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(embeddingModelId, null, 0, 0, new Date().toISOString());
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error('Embedding delete error:', error);
+    return NextResponse.json({ error: 'Failed to delete embeddings' }, { status: 500 });
   }
 }

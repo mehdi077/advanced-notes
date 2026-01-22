@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import db from '@/lib/db';
 
-const EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
+const DEFAULT_EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
 const TOP_K = 3; // Number of relevant chunks to retrieve
 
-async function getEmbedding(text: string): Promise<number[]> {
+async function getEmbedding(text: string, embeddingModelId: string): Promise<number[]> {
   const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
     method: 'POST',
     headers: {
@@ -13,7 +13,7 @@ async function getEmbedding(text: string): Promise<number[]> {
       'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
     },
     body: JSON.stringify({
-      model: EMBEDDING_MODEL,
+      model: embeddingModelId,
       input: text,
     }),
   });
@@ -45,17 +45,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'OPENROUTER_API_KEY not set' }, { status: 500 });
     }
 
-    const { query } = await request.json();
+    const body = (await request.json()) as Record<string, unknown>;
+    const query = body.query;
+    const embeddingModelIdRaw = body.embeddingModelId;
     if (!query) {
       return NextResponse.json({ error: 'Query required' }, { status: 400 });
     }
 
+    if (typeof query !== 'string') {
+      return NextResponse.json({ error: 'Query required' }, { status: 400 });
+    }
+
+    const embeddingModelId =
+      typeof embeddingModelIdRaw === 'string' && embeddingModelIdRaw.trim()
+        ? embeddingModelIdRaw.trim()
+        : DEFAULT_EMBEDDING_MODEL;
+
     // Get query embedding
-    const queryEmbedding = await getEmbedding(query);
+    const queryEmbedding = await getEmbedding(query, embeddingModelId);
 
     // Get all embeddings from database
-    const rows = db.prepare('SELECT chunk_text, embedding FROM embeddings').all() as { 
-      chunk_text: string; 
+    const rows = db
+      .prepare('SELECT chunk_text, embedding FROM embeddings WHERE embedding_model_id = ?')
+      .all(embeddingModelId) as {
+      chunk_text: string;
       embedding: Buffer;
     }[];
 
@@ -83,6 +96,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       context,
       chunks: relevantChunks,
+      embeddingModelId,
     });
   } catch (error) {
     console.error('RAG retrieval error:', error);

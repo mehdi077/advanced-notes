@@ -10,6 +10,7 @@ export default function VoiceChat() {
 
   const STORAGE_CHAT_SELECTED_MODEL_KEY = 'helm.chat.selectedModel';
   const STORAGE_CUSTOM_MODELS_KEY = 'helm.customModels';
+  const STORAGE_EMBEDDING_MODEL_KEY = 'helm.embeddingModelId';
 
   type ChatRole = 'user' | 'assistant';
   interface ChatMessage {
@@ -25,6 +26,7 @@ export default function VoiceChat() {
   const [selectedModel, setSelectedModel] = useState<ModelId>(DEFAULT_MODEL);
   const [customModelIds, setCustomModelIds] = useState<string[]>([]);
   const [useRagContext, setUseRagContext] = useState(true);
+  const [embeddingModelId, setEmbeddingModelId] = useState('qwen/qwen3-embedding-8b');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +68,10 @@ export default function VoiceChat() {
     const rawSelected = window.localStorage.getItem(STORAGE_CHAT_SELECTED_MODEL_KEY);
     const selected = rawSelected?.trim();
     if (selected) setSelectedModel(selected as ModelId);
+
+    const rawEmbeddingModel = window.localStorage.getItem(STORAGE_EMBEDDING_MODEL_KEY);
+    const em = rawEmbeddingModel?.trim();
+    if (em) setEmbeddingModelId(em);
   }, []);
 
   useEffect(() => {
@@ -124,6 +130,7 @@ export default function VoiceChat() {
         body: JSON.stringify({
           modelId: selectedModel,
           useRagContext,
+          embeddingModelId,
           messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
         }),
       });
@@ -150,7 +157,7 @@ export default function VoiceChat() {
       setIsSending(false);
       inputRef.current?.focus();
     }
-  }, [input, isSending, messages, selectedModel, useRagContext]);
+  }, [input, isSending, messages, selectedModel, useRagContext, embeddingModelId]);
 
   if (!isModalOpen) return null;
 
