@@ -1,6 +1,63 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOpenRouterModel, DEFAULT_MODEL, ModelId } from '@/lib/model-config';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import db from '@/lib/db';
+
+const EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
+const TOP_K = 3;
+
+async function getEmbedding(text: string): Promise<number[]> {
+  const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+    },
+    body: JSON.stringify({
+      model: EMBEDDING_MODEL,
+      input: text,
+    }),
+  });
+
+  if (!response.ok) return [];
+  const data = await response.json();
+  return data.data?.[0]?.embedding || [];
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dotProduct = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dotProduct += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+async function getRAGContext(query: string): Promise<string> {
+  try {
+    const queryEmbedding = await getEmbedding(query);
+    if (queryEmbedding.length === 0) return '';
+
+    const rows = db.prepare('SELECT chunk_text, embedding FROM embeddings').all() as { 
+      chunk_text: string; embedding: Buffer;
+    }[];
+    if (rows.length === 0) return '';
+
+    const similarities = rows.map(row => {
+      const embedding = Array.from(new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.length / 4));
+      return { text: row.chunk_text, score: cosineSimilarity(queryEmbedding, embedding) };
+    });
+
+    similarities.sort((a, b) => b.score - a.score);
+    const relevant = similarities.slice(0, TOP_K).filter(c => c.score > 0.3);
+    return relevant.map(c => c.text).join('\n\n');
+  } catch (error) {
+    console.error('RAG error:', error);
+    return '';
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -22,11 +79,20 @@ export async function POST(request: NextRequest) {
 
     const model = getOpenRouterModel((modelId as ModelId) || DEFAULT_MODEL);
 
-    const systemPrompt = new SystemMessage(
-      'You are a writing assistant. Your task is to continue the user\'s text naturally. ' +
+    // Get RAG context
+    const ragContext = await getRAGContext(text);
+
+    let systemPromptContent = 'You are a writing assistant. Your task is to continue the user\'s text naturally. ' +
       'Respond with ONLY the completion text, nothing else. ' +
-      'Do not include any explanations, quotes, or the original text.'
-    );
+      'Do not include any explanations, quotes, or the original text.';
+
+    if (ragContext) {
+      systemPromptContent += '\n\nHere is some relevant context from the document that may help you write a more coherent continuation:\n\n' +
+        '---RELEVANT CONTEXT---\n' + ragContext + '\n---END CONTEXT---\n\n' +
+        'Use this context to ensure your continuation is consistent with the themes and information already established in the document.';
+    }
+
+    const systemPrompt = new SystemMessage(systemPromptContent);
 
     const userPromptText = prompt || 'Provide a two sentence long completion to this text:';
     const userPrompt = new HumanMessage(`${userPromptText} ${text}`);

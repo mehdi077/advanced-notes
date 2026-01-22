@@ -8,7 +8,7 @@ import { Highlight } from '@tiptap/extension-highlight';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { debounce } from 'lodash';
-import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, Mic, Play, Square, Pause, SkipBack, SkipForward } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, Mic, Play, Square, Pause, SkipBack, SkipForward, Database } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
 import { CompletionMark } from '@/lib/completion-mark';
@@ -74,6 +74,11 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const [modelPricing, setModelPricing] = useState<ModelPricingMap>({});
   const [lastGenerationCost, setLastGenerationCost] = useState<number | null>(null);
   const [promptsLoaded, setPromptsLoaded] = useState(false);
+
+  // RAG embedding state
+  const [ragStatus, setRagStatus] = useState<{ percentage: number; totalChunks: number; embeddedChunks: number; needsUpdate: boolean } | null>(null);
+  const [isEmbedding, setIsEmbedding] = useState(false);
+  const [embeddingError, setEmbeddingError] = useState<string | null>(null);
 
   // TTS playback state for generated ghost text
   const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
@@ -323,6 +328,38 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     []
   );
 
+  // Fetch RAG embedding status
+  const fetchRagStatus = useCallback(async () => {
+    try {
+      const response = await fetch('/api/embeddings');
+      if (response.ok) {
+        const data = await response.json();
+        setRagStatus(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch RAG status:', error);
+    }
+  }, []);
+
+  // Embed document chunks
+  const embedDocument = useCallback(async () => {
+    setIsEmbedding(true);
+    setEmbeddingError(null);
+    try {
+      const response = await fetch('/api/embeddings', { method: 'POST' });
+      if (response.ok) {
+        await fetchRagStatus();
+      } else {
+        const data = await response.json();
+        setEmbeddingError(data.error || 'Failed to embed');
+      }
+    } catch (error) {
+      setEmbeddingError('Failed to embed document');
+    } finally {
+      setIsEmbedding(false);
+    }
+  }, [fetchRagStatus]);
+
   const cleanupTtsAudio = useCallback(() => {
     if (ttsAbortControllerRef.current) {
       ttsAbortControllerRef.current.abort();
@@ -429,7 +466,8 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     fetchBalance();
     fetchModelPricing();
     fetchPrompts();
-  }, [fetchBalance, fetchModelPricing, fetchPrompts]);
+    fetchRagStatus();
+  }, [fetchBalance, fetchModelPricing, fetchPrompts, fetchRagStatus]);
 
   useEffect(() => {
     return () => {
@@ -1168,6 +1206,73 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             <div className="text-xl font-mono text-green-400">
               {balanceInfo ? `$${balanceInfo.balance.toFixed(4)}` : '---'}
             </div>
+          </div>
+
+          {/* RAG Embedding Status */}
+          <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-zinc-400 flex items-center gap-2">
+                <Database size={16} />
+                RAG Embeddings
+              </span>
+              <button
+                type="button"
+                onClick={fetchRagStatus}
+                className="p-1 hover:bg-zinc-700 rounded transition-colors cursor-pointer"
+                title="Refresh status"
+              >
+                <RefreshCw size={14} />
+              </button>
+            </div>
+            
+            {ragStatus && (
+              <>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-2 bg-zinc-700 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-300 ${
+                        ragStatus.percentage === 100 ? 'bg-green-500' : 'bg-blue-500'
+                      }`}
+                      style={{ width: `${ragStatus.percentage}%` }}
+                    />
+                  </div>
+                  <span className={`text-sm font-mono ${
+                    ragStatus.percentage === 100 ? 'text-green-400' : 'text-blue-400'
+                  }`}>
+                    {ragStatus.percentage}%
+                  </span>
+                </div>
+                
+                <div className="text-xs text-zinc-500">
+                  {ragStatus.embeddedChunks} / {ragStatus.totalChunks} chunks embedded
+                </div>
+
+                {ragStatus.needsUpdate && (
+                  <button
+                    type="button"
+                    onClick={embedDocument}
+                    disabled={isEmbedding}
+                    className="flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-700 disabled:cursor-not-allowed rounded text-white text-sm font-medium transition-colors cursor-pointer"
+                  >
+                    {isEmbedding ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        Embedding...
+                      </>
+                    ) : (
+                      <>
+                        <Database size={14} />
+                        Embed New Chunks
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {embeddingError && (
+                  <div className="text-xs text-red-400 mt-1">{embeddingError}</div>
+                )}
+              </>
+            )}
           </div>
           
           {/* Model Selection */}
