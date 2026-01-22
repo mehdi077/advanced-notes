@@ -1353,15 +1353,17 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
           </div>
         )}
 
-        <audio
-          ref={ttsAudioRef}
-          src={ttsAudioUrl ?? ''}
-          onEnded={() => setIsTtsPlaying(false)}
-          onPause={() => setIsTtsPlaying(false)}
-          onPlay={() => setIsTtsPlaying(true)}
-          onError={() => setTtsError('Audio playback error')}
-          className="hidden"
-        />
+        {ttsAudioUrl && (
+          <audio
+            ref={ttsAudioRef}
+            src={ttsAudioUrl}
+            onEnded={() => setIsTtsPlaying(false)}
+            onPause={() => setIsTtsPlaying(false)}
+            onPlay={() => setIsTtsPlaying(true)}
+            onError={() => setTtsError('Audio playback error')}
+            className="hidden"
+          />
+        )}
       </div>
 
       {/* Mobile Touch Controls - rendered via Portal to ensure proper z-index on iOS */}
