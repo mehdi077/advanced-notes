@@ -447,9 +447,14 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
 
   useEffect(() => {
     return () => {
-      cleanupTtsAudio();
+      if (ttsAbortControllerRef.current) {
+        ttsAbortControllerRef.current.abort();
+      }
+      if (ttsAudioRef.current) {
+        ttsAudioRef.current.pause();
+      }
     };
-  }, [cleanupTtsAudio]);
+  }, []);
 
   // Save prompts when they change (after initial load)
   useEffect(() => {
