@@ -8,7 +8,7 @@ import { Highlight } from '@tiptap/extension-highlight';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { debounce } from 'lodash';
-import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, Mic } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, Mic, Play, Square } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
 import { CompletionMark } from '@/lib/completion-mark';
@@ -74,6 +74,14 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const [modelPricing, setModelPricing] = useState<ModelPricingMap>({});
   const [lastGenerationCost, setLastGenerationCost] = useState<number | null>(null);
   const [promptsLoaded, setPromptsLoaded] = useState(false);
+
+  // TTS playback state for generated ghost text
+  const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
+  const [isTtsLoading, setIsTtsLoading] = useState(false);
+  const [isTtsPlaying, setIsTtsPlaying] = useState(false);
+  const [ttsError, setTtsError] = useState<string | null>(null);
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ttsAbortControllerRef = useRef<AbortController | null>(null);
   
   // Saved completion popup state
   const [savedCompletionPopup, setSavedCompletionPopup] = useState<{ isOpen: boolean; content: string }>({
@@ -313,12 +321,117 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     []
   );
 
+  const cleanupTtsAudio = useCallback(() => {
+    if (ttsAbortControllerRef.current) {
+      ttsAbortControllerRef.current.abort();
+      ttsAbortControllerRef.current = null;
+    }
+
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.pause();
+      ttsAudioRef.current.src = '';
+    }
+
+    if (ttsAudioUrl) {
+      URL.revokeObjectURL(ttsAudioUrl);
+    }
+
+    setTtsAudioUrl(null);
+    setIsTtsLoading(false);
+    setIsTtsPlaying(false);
+    setTtsError(null);
+  }, [ttsAudioUrl]);
+
+  const generateTtsForCompletion = useCallback(async (text: string) => {
+    if (!text || !text.trim()) return;
+
+    cleanupTtsAudio();
+    setIsTtsLoading(true);
+    setTtsError(null);
+    setIsTtsPlaying(false);
+
+    const controller = new AbortController();
+    ttsAbortControllerRef.current = controller;
+
+    try {
+      const response = await fetch('/api/generation-tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to generate audio');
+      }
+
+      const contentType = response.headers.get('Content-Type') || 'audio/wav';
+      const buffer = await response.arrayBuffer();
+
+      if (!buffer || buffer.byteLength === 0) {
+        throw new Error('Received empty audio');
+      }
+
+      const blob = new Blob([buffer], { type: contentType });
+      const url = URL.createObjectURL(blob);
+      setTtsAudioUrl(url);
+
+      if (ttsAudioRef.current) {
+        const audioElement = ttsAudioRef.current;
+        audioElement.src = url;
+        audioElement.currentTime = 0;
+
+        try {
+          await audioElement.play();
+          setIsTtsPlaying(true);
+        } catch (error) {
+          setIsTtsPlaying(false);
+          setTtsError('Autoplay blocked. Press play to listen.');
+        }
+      }
+    } catch (error: any) {
+      if (error?.name === 'AbortError') return;
+      setTtsError(error?.message || 'Failed to generate audio');
+    } finally {
+      setIsTtsLoading(false);
+      if (ttsAbortControllerRef.current === controller) {
+        ttsAbortControllerRef.current = null;
+      }
+    }
+  }, [cleanupTtsAudio]);
+
+  const toggleTtsPlayback = useCallback(async () => {
+    if (!ttsAudioRef.current || !ttsAudioUrl) return;
+
+    if (isTtsPlaying) {
+      ttsAudioRef.current.pause();
+      setIsTtsPlaying(false);
+      return;
+    }
+
+    try {
+      ttsAudioRef.current.currentTime = 0;
+      await ttsAudioRef.current.play();
+      setIsTtsPlaying(true);
+      setTtsError(null);
+    } catch (error) {
+      setTtsError('Playback failed. Please try again.');
+    }
+  }, [isTtsPlaying, ttsAudioUrl]);
+
   // Fetch balance, pricing, and prompts on mount
   useEffect(() => {
     fetchBalance();
     fetchModelPricing();
     fetchPrompts();
   }, [fetchBalance, fetchModelPricing, fetchPrompts]);
+
+  useEffect(() => {
+    return () => {
+      cleanupTtsAudio();
+    };
+  }, [cleanupTtsAudio]);
 
   // Save prompts when they change (after initial load)
   useEffect(() => {
@@ -392,6 +505,8 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     // Keep editor focused (prevents keyboard from hiding on mobile)
     editor.commands.focus();
 
+    cleanupTtsAudio();
+
     const text = getTextForCompletion();
 
     setIsAutoCompleting(true);
@@ -460,6 +575,8 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
           } else {
             setLastGenerationCost(null);
           }
+
+          generateTtsForCompletion(completionText);
         }
       }
       
@@ -479,7 +596,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       setIsAutoCompleting(false);
       abortControllerRef.current = null;
     }
-  }, [editor, isAutoCompleting, getTextForCompletion, selectedModel, customPrompt, fetchBalance, modelPricing, getCursorCoords]);
+  }, [editor, isAutoCompleting, getTextForCompletion, selectedModel, customPrompt, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion]);
 
   // Handle regeneration when Tab is pressed with no words selected
   const handleRegenerate = useCallback(async () => {
@@ -487,6 +604,8 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     
     // Keep editor focused (prevents keyboard from hiding on mobile)
     editor.commands.focus();
+
+    cleanupTtsAudio();
 
     // Get the current ghost text before removing it
     const currentCompletionText = completionTextRef.current.trim();
@@ -567,6 +686,8 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
           } else {
             setLastGenerationCost(null);
           }
+
+          generateTtsForCompletion(completionText);
         }
       }
       
@@ -586,7 +707,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       setIsAutoCompleting(false);
       abortControllerRef.current = null;
     }
-  }, [editor, isAutoCompleting, completion, attemptHistory, getTextForCompletion, buildRegenPrompt, selectedModel, fetchBalance, modelPricing, getCursorCoords]);
+  }, [editor, isAutoCompleting, completion, attemptHistory, getTextForCompletion, buildRegenPrompt, selectedModel, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion]);
 
   // Cancel ongoing generation
   const cancelGeneration = useCallback(() => {
@@ -596,15 +717,18 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     }
     setLoaderPosition(null);
     setIsAutoCompleting(false);
+    cleanupTtsAudio();
     // Keep editor focused (prevents keyboard from hiding on mobile)
     editor?.commands.focus();
-  }, [editor]);
+  }, [editor, cleanupTtsAudio]);
 
   const confirmCompletion = useCallback(() => {
     if (!editor || !completion.isActive || !completion.range) return;
     
     // Keep editor focused (prevents keyboard from hiding on mobile)
     editor.commands.focus();
+
+    cleanupTtsAudio();
 
     const { from, to } = completion.range;
     const selectedWords = completion.words.slice(0, completion.selectedCount);
@@ -640,13 +764,15 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       selectedCount: 0,
       range: null,
     });
-  }, [editor, completion]);
+  }, [editor, completion, cleanupTtsAudio]);
 
   const cancelCompletion = useCallback(() => {
     if (!editor || !completion.isActive || !completion.range) return;
     
     // Keep editor focused (prevents keyboard from hiding on mobile)
     editor.commands.focus();
+
+    cleanupTtsAudio();
 
     const { from, to } = completion.range;
     
@@ -669,13 +795,15 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       selectedCount: 0,
       range: null,
     });
-  }, [editor, completion.isActive, completion.range]);
+  }, [editor, completion.isActive, completion.range, cleanupTtsAudio]);
 
   const saveCompletion = useCallback(() => {
     if (!editor || !completion.isActive || !completion.range) return;
     
     // Keep editor focused (prevents keyboard from hiding on mobile)
     editor.commands.focus();
+
+    cleanupTtsAudio();
 
     const { from, to } = completion.range;
     const selectedWords = completion.words.slice(0, completion.selectedCount);
@@ -708,7 +836,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       selectedCount: 0,
       range: null,
     });
-  }, [editor, completion, completionTextRef]);
+  }, [editor, completion, completionTextRef, cleanupTtsAudio]);
 
   const selectNextWord = useCallback(() => {
     if (!completion.isActive) return;
@@ -904,6 +1032,22 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               <span className="text-green-300 font-mono">${lastGenerationCost.toFixed(6)}</span>
             </>
           )}
+          {(isTtsLoading || ttsAudioUrl) && (
+            <div className="flex items-center gap-1 ml-1">
+              {isTtsLoading ? (
+                <Loader2 size={14} className="animate-spin text-white" />
+              ) : (
+                <button
+                  type="button"
+                  onClick={toggleTtsPlayback}
+                  className="p-1 rounded bg-blue-500/80 hover:bg-blue-500 text-white transition-colors"
+                  title={isTtsPlaying ? 'Stop preview' : 'Play preview'}
+                >
+                  {isTtsPlaying ? <Square size={14} /> : <Play size={14} />}
+                </button>
+              )}
+            </div>
+          )}
           {/* Desktop-only shortcuts hints */}
           <div className="hidden md:flex items-center gap-3 ml-2">
             <span className="text-blue-200">|</span>
@@ -918,6 +1062,12 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             <span className="text-amber-200">Enter save</span>
             <span className="text-blue-200">Esc cancel</span>
           </div>
+        </div>
+      )}
+
+      {ttsError && completion.isActive && (
+        <div className="fixed left-1/2 -translate-x-1/2 top-14 z-[69] text-[11px] md:text-xs text-amber-200 bg-zinc-900 px-2 py-1 rounded border border-amber-500/50 shadow-lg">
+          {ttsError}
         </div>
       )}
 
@@ -1202,6 +1352,16 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             </div>
           </div>
         )}
+
+        <audio
+          ref={ttsAudioRef}
+          src={ttsAudioUrl ?? ''}
+          onEnded={() => setIsTtsPlaying(false)}
+          onPause={() => setIsTtsPlaying(false)}
+          onPlay={() => setIsTtsPlaying(true)}
+          onError={() => setTtsError('Audio playback error')}
+          className="hidden"
+        />
       </div>
 
       {/* Mobile Touch Controls - rendered via Portal to ensure proper z-index on iOS */}
