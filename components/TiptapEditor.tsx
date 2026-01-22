@@ -8,7 +8,7 @@ import { Highlight } from '@tiptap/extension-highlight';
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { debounce } from 'lodash';
-import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, Mic, Play, Pause, SkipBack, SkipForward, Database, Plus } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, MessageSquare, Play, Pause, SkipBack, SkipForward, Database, Plus } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
 import { CompletionMark } from '@/lib/completion-mark';
@@ -1559,12 +1559,10 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                         {model.description}
                       </span>
                     </div>
-                    {pricing && (
-                      <div className={`text-xs text-right ${isSelected ? 'text-blue-200' : 'text-zinc-500'}`}>
-                        <div>{formatCost(pricing.prompt)}/M in</div>
-                        <div>{formatCost(pricing.completion)}/M out</div>
-                      </div>
-                    )}
+                    <div className={`text-xs text-right ${isSelected ? 'text-blue-200' : 'text-zinc-500'}`}>
+                      <div>{pricing ? `${formatCost(pricing.prompt)}/M in` : '--/M in'}</div>
+                      <div>{pricing ? `${formatCost(pricing.completion)}/M out` : '--/M out'}</div>
+                    </div>
                   </button>
                 );
               })}
@@ -1647,17 +1645,17 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
 
           {/* Voice Assistant Button */}
           <div className="flex flex-col gap-2">
-            <span className="text-sm text-zinc-400">Voice Assistant</span>
+            <span className="text-sm text-zinc-400">Chat</span>
             <button
               type="button"
               onClick={() => setIsModalOpen(true)}
               className="flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 hover:bg-purple-700 rounded text-white font-medium transition-colors cursor-pointer"
             >
-              <Mic size={18} />
-              Start Voice Chat
+              <MessageSquare size={18} />
+              Open Chat
             </button>
             <div className="text-xs text-zinc-500">
-              Have a conversation with the AI assistant using your voice
+              Chat with an OpenRouter model (conversation clears when you close the popup)
             </div>
           </div>
 
@@ -1888,14 +1886,13 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       {isMounted && createPortal(
         <div 
           ref={fabContainerRef}
-          className="fixed right-0 z-[9999] flex flex-col items-end justify-end pr-6 select-none"
+          className="fixed right-0 z-[9999] flex flex-col items-end justify-end pr-6 select-none md:hidden pointer-events-none"
           contentEditable={false}
           style={{ 
             // top is handled by ref
             // removed bottom positioning
             // width adjusted for controls
             width: completion.isActive ? '100%' : '100px',
-            pointerEvents: 'auto',
             WebkitTapHighlightColor: 'transparent',
             WebkitUserSelect: 'none',
             userSelect: 'none',
@@ -1906,7 +1903,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         >
           {/* Completion Controls - shown when completion is active */}
           {completion.isActive && (
-            <div className="flex items-center gap-2 bg-zinc-900/95 backdrop-blur-sm rounded-full px-3 py-2 shadow-lg border border-zinc-700/50" style={{ touchAction: 'manipulation' }}>
+            <div className="flex items-center gap-2 bg-zinc-900/95 backdrop-blur-sm rounded-full px-3 py-2 shadow-lg border border-zinc-700/50 pointer-events-auto" style={{ touchAction: 'manipulation' }}>
               {/* Word count indicator */}
               <span className="text-xs text-zinc-400 px-2">
                 {completion.selectedCount}/{completion.words.length}
@@ -2035,7 +2032,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
               onTouchEnd={(e) => { e.preventDefault(); cancelGeneration(); }}
               onClick={cancelGeneration}
-              className="p-3 rounded-full bg-zinc-900/95 backdrop-blur-sm text-red-400 hover:text-red-300 hover:bg-zinc-800 transition-all shadow-lg border border-zinc-700/50 select-none"
+              className="p-3 rounded-full bg-zinc-900/95 backdrop-blur-sm text-red-400 hover:text-red-300 hover:bg-zinc-800 transition-all shadow-lg border border-zinc-700/50 select-none pointer-events-auto"
               style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
               title="Cancel generation"
             >
@@ -2052,7 +2049,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
               onTouchEnd={(e) => { e.preventDefault(); handleAutoComplete(); }}
               onClick={handleAutoComplete}
-              className="p-4 rounded-full bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-lg hover:shadow-blue-500/25 hover:scale-105 active:scale-95 select-none"
+              className="p-4 rounded-full bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-lg hover:shadow-blue-500/25 hover:scale-105 active:scale-95 select-none pointer-events-auto"
               style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
               title="Generate AI completion"
             >

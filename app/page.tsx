@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { debounce } from 'lodash';
 import TiptapEditor from '../components/TiptapEditor';
 import VoiceChat from '../components/VoiceChat';
-import { ArrowDown, AudioWaveform } from 'lucide-react';
+import { ArrowDown, MessageSquare } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 
 export default function Home() {
@@ -96,9 +96,9 @@ export default function Home() {
       <button
         onClick={() => setIsModalOpen(true)}
         className="fixed bottom-6 right-6 md:bottom-8 md:right-8 w-14 h-14 md:w-16 md:h-16 rounded-full bg-purple-600 hover:bg-purple-700 shadow-lg transition-colors z-[35] flex items-center justify-center"
-        title="Open Voice Assistant"
+        title="Open Chat"
       >
-        <AudioWaveform size={24} className="text-white" />
+        <MessageSquare size={24} className="text-white" />
       </button>
 
       {/* Voice Chat Modal */}

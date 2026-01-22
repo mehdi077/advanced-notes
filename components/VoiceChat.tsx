@@ -1,488 +1,167 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
-import SimpleVisualizer from '@/components/SimpleVisualizer';
-import { X, Mic, Square } from 'lucide-react';
+import { X, Send } from 'lucide-react';
+import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
 
 export default function VoiceChat() {
-  const { 
-    status, 
-    setStatus, 
-    setIsListening,
-    isPlayingAudio,
-    setIsPlayingAudio,
-    isModalOpen,
-    setIsModalOpen,
-    conversationHistory,
-    addToConversation,
-    clearConversation,
-  } = useVoiceStore();
+  const { isModalOpen, setIsModalOpen } = useVoiceStore();
 
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [audioContextUnlocked, setAudioContextUnlocked] = useState(false);
-  const [permissionError, setPermissionError] = useState<string | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [currentTranscription, setCurrentTranscription] = useState<string>('');
-  const [currentGeneration, setCurrentGeneration] = useState<string>('');
-  const conversationScrollRef = useRef<HTMLDivElement>(null);
-  
-  // Manual recording state
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const [recordingDuration, setRecordingDuration] = useState(0);
-  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const STORAGE_CHAT_SELECTED_MODEL_KEY = 'helm.chat.selectedModel';
+  const STORAGE_CUSTOM_MODELS_KEY = 'helm.customModels';
 
-  // Cleanup on unmount
+  type ChatRole = 'user' | 'assistant';
+  interface ChatMessage {
+    role: ChatRole;
+    content: string;
+    ragContext?: string | null;
+  }
+
+  interface ModelPricingMap {
+    [modelId: string]: ModelPricing;
+  }
+
+  const [selectedModel, setSelectedModel] = useState<ModelId>(DEFAULT_MODEL);
+  const [customModelIds, setCustomModelIds] = useState<string[]>([]);
+  const [useRagContext, setUseRagContext] = useState(true);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [modelPricing, setModelPricing] = useState<ModelPricingMap>({});
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const allModels = useMemo(() => {
+    const builtInIds = new Set(AVAILABLE_MODELS.map(m => m.id));
+    const custom = customModelIds
+      .map(s => s.trim())
+      .filter(Boolean)
+      .filter(id => !builtInIds.has(id as ModelId))
+      .map((id) => ({ id: id as ModelId, name: id, description: 'Custom OpenRouter model' }));
+    return [...AVAILABLE_MODELS, ...custom];
+  }, [customModelIds]);
+
   useEffect(() => {
-    const audio = audioRef.current;
-    return () => {
-      // Cleanup audio URLs
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl);
+    if (!isModalOpen) return;
+    setError(null);
+    const t = window.setTimeout(() => inputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [isModalOpen]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const rawCustom = window.localStorage.getItem(STORAGE_CUSTOM_MODELS_KEY);
+    if (rawCustom) {
+      try {
+        const parsed: unknown = JSON.parse(rawCustom);
+        if (Array.isArray(parsed)) {
+          setCustomModelIds(parsed.filter((v): v is string => typeof v === 'string').map(s => s.trim()).filter(Boolean));
+        }
+      } catch {
+        // ignore
       }
-      // Cleanup media stream
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-      // Stop audio playback
-      if (audio) {
-        audio.pause();
-        audio.src = '';
-      }
-      // Clear recording timer
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current);
+    }
+    const rawSelected = window.localStorage.getItem(STORAGE_CHAT_SELECTED_MODEL_KEY);
+    const selected = rawSelected?.trim();
+    if (selected) setSelectedModel(selected as ModelId);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(STORAGE_CHAT_SELECTED_MODEL_KEY, String(selectedModel));
+  }, [selectedModel]);
+
+  useEffect(() => {
+    // Fetch OpenRouter pricing (best-effort)
+    const fetchPricing = async () => {
+      try {
+        const res = await fetch('/api/models');
+        if (!res.ok) return;
+        const data = (await res.json()) as { models?: Array<{ id: string; pricing: ModelPricing }> };
+        const map: ModelPricingMap = {};
+        for (const m of data.models || []) {
+          map[m.id] = m.pricing;
+        }
+        setModelPricing(map);
+      } catch {
+        // ignore
       }
     };
-  }, [audioUrl, stream]);
+    void fetchPricing();
+  }, []);
 
-  // Unlock audio context on user interaction
-  const unlockAudio = useCallback(() => {
-    if (audioContextUnlocked) return;
-    const silentAudio = new Audio(
-      'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=='
-    );
-    silentAudio.muted = true;
-    silentAudio.volume = 0;
-    silentAudio.setAttribute('playsinline', 'true');
-    silentAudio.play().then(() => {
-      silentAudio.pause();
-      silentAudio.currentTime = 0;
-      setAudioContextUnlocked(true);
-      console.log('✅ Audio context unlocked');
-    }).catch((e) => {
-      console.warn('Audio unlock failed:', e);
-    });
-  }, [audioContextUnlocked]);
-
-  // Keep scroll at top (newest messages appear at top)
   useEffect(() => {
-    if (conversationScrollRef.current) {
-      conversationScrollRef.current.scrollTop = 0;
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [conversationHistory, currentTranscription, currentGeneration]);
+  }, [messages, isSending]);
 
-  // Start recording
-  const startRecording = useCallback(async () => {
-    try {
-      setPermissionError(null);
-      unlockAudio();
-
-      console.log('🎤 Requesting microphone access...');
-      
-      // Request microphone access
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: { ideal: 16000 }
-        }
-      }).catch(async (err) => {
-        if (err.name === 'OverconstrainedError') {
-          console.log('📱 Using fallback audio constraints');
-          return navigator.mediaDevices.getUserMedia({ audio: true });
-        }
-        throw err;
-      });
-
-      setStream(mediaStream);
-
-      // Setup MediaRecorder
-      audioChunksRef.current = [];
-      
-      // Detect supported MIME type
-      let mimeType = 'audio/webm';
-      if (!MediaRecorder.isTypeSupported('audio/webm')) {
-        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-          mimeType = 'audio/webm;codecs=opus';
-        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-          mimeType = 'audio/mp4';
-        } else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
-          mimeType = 'audio/ogg;codecs=opus';
-        }
-      }
-      console.log('📼 Using MIME type:', mimeType);
-      
-      const mediaRecorder = new MediaRecorder(mediaStream, {
-        mimeType: mimeType,
-      });
-
-      mediaRecorder.ondataavailable = (event) => {
-        console.log('📊 Data available event fired! Size:', event.data.size, 'bytes');
-        if (event.data && event.data.size > 0) {
-          console.log('✅ Pushing chunk to array, current length:', audioChunksRef.current.length);
-          audioChunksRef.current.push(event.data);
-        } else {
-          console.warn('⚠️ Data available but size is 0 or data is null');
-        }
-      };
-      
-      mediaRecorder.onerror = (event) => {
-        console.error('❌ MediaRecorder error:', event);
-        setPermissionError('Recording error occurred');
-        setStatus('idle');
-      };
-      
-      mediaRecorder.onstart = () => {
-        console.log('🎬 MediaRecorder onstart event fired');
-        console.log('📊 MediaRecorder state:', mediaRecorder.state);
-      };
-
-      mediaRecorder.onstop = async () => {
-        console.log('🛑 MediaRecorder stopped, chunks:', audioChunksRef.current.length);
-        
-        if (audioChunksRef.current.length === 0) {
-          console.error('❌ No audio data captured');
-          setPermissionError('No audio recorded. Please try again.');
-          setStatus('idle');
-          return;
-        }
-        
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        console.log('🎤 Recording stopped, blob size:', audioBlob.size, 'type:', audioBlob.type);
-        
-        if (audioBlob.size === 0) {
-          console.error('❌ Audio blob is empty');
-          setPermissionError('Recording failed. Please try again.');
-          setStatus('idle');
-          return;
-        }
-        
-        // Process the audio automatically
-        try {
-          setStatus('transcribing');
-          setIsProcessing(true);
-          setCurrentTranscription('');
-          setCurrentGeneration('');
-          setPermissionError(null);
-
-          const formData = new FormData();
-          formData.append('audio', audioBlob, 'input.webm');
-          formData.append('conversationHistory', JSON.stringify(conversationHistory));
-          
-          const response = await fetch('/api/voice', {
-            method: 'POST',
-            body: formData,
-          });
-
-          if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ error: 'Failed to process audio' }));
-            throw new Error(errorData.error || 'Failed to process audio');
-          }
-
-          // Get transcription and response text from headers
-          const transcription = decodeURIComponent(response.headers.get('X-Transcription') || '');
-          const responseText = decodeURIComponent(response.headers.get('X-Response-Text') || '');
-
-          // Show transcription
-          if (transcription) {
-            setStatus('thinking');
-            setCurrentTranscription(transcription);
-            await new Promise(resolve => setTimeout(resolve, 300));
-            addToConversation('user', transcription);
-            setCurrentTranscription('');
-          }
-
-          // Show generation text
-          setStatus('generating_audio');
-          if (responseText) {
-            setCurrentGeneration(responseText);
-            await new Promise(resolve => setTimeout(resolve, 300));
-            addToConversation('assistant', responseText);
-            setCurrentGeneration('');
-          }
-
-          // Get audio blob with proper mime type
-          const responseArrayBuffer = await response.arrayBuffer();
-          console.log('🔊 Received audio data:', {
-            size: responseArrayBuffer.byteLength,
-            contentType: response.headers.get('Content-Type')
-          });
-          
-          // Validate audio data
-          if (responseArrayBuffer.byteLength === 0) {
-            console.error('❌ Received empty audio data');
-            throw new Error('Received empty audio response');
-          }
-          
-          // Create blob with explicit mime type from response headers
-          const contentType = response.headers.get('Content-Type') || 'audio/wav';
-          const responseAudioBlob = new Blob([responseArrayBuffer], { type: contentType });
-          
-          console.log('🔊 Created audio blob:', {
-            size: responseAudioBlob.size,
-            type: responseAudioBlob.type
-          });
-          
-          // Check browser audio format support
-          const audio = document.createElement('audio');
-          const canPlayMP3 = audio.canPlayType('audio/mpeg');
-          const canPlayWAV = audio.canPlayType('audio/wav');
-          console.log('🎵 Browser audio support:', { mp3: canPlayMP3, wav: canPlayWAV });
-          
-          // Revoke previous audio URL if exists
-          if (audioUrl) {
-            URL.revokeObjectURL(audioUrl);
-          }
-          
-          const url = URL.createObjectURL(responseAudioBlob);
-          setAudioUrl(url);
-          console.log('🔗 Created audio URL:', url);
-          
-          // Auto-play
-          if (audioRef.current) {
-            const audioElement = audioRef.current;
-            audioElement.src = url;
-            
-            // Set up one-time load event handler
-            const handleLoadError = () => {
-              console.error('❌ Audio failed to load after setting src');
-              setPermissionError('Audio format not supported by browser');
-              setStatus('idle');
-            };
-            
-            audioElement.addEventListener('error', handleLoadError, { once: true });
-            
-            try {
-              await audioElement.load(); // Ensure the audio is loaded
-              console.log('▶️ Attempting to play audio...');
-              
-              // Try to play
-              const playPromise = audioElement.play();
-              
-              if (playPromise !== undefined) {
-                await playPromise;
-                setIsPlayingAudio(true);
-                setStatus('speaking');
-                console.log('✅ Audio playing successfully');
-                // Remove error listener if play succeeds
-                audioElement.removeEventListener('error', handleLoadError);
-              }
-            } catch (error: unknown) {
-              const errorName =
-                (typeof (error as { name?: unknown })?.name === 'string' && (error as { name: string }).name) ||
-                '';
-              const errorMessage =
-                (typeof (error as { message?: unknown })?.message === 'string' &&
-                  (error as { message: string }).message) ||
-                '';
-
-              console.error("❌ Autoplay failed:", error);
-              console.error("Error name:", errorName);
-              console.error("Error message:", errorMessage);
-              
-              // Remove error listener
-              audioElement.removeEventListener('error', handleLoadError);
-              
-              // Set error with helpful message
-              if (errorName === 'NotAllowedError') {
-                setPermissionError('Browser blocked autoplay. Please click the audio player to play.');
-              } else if (errorName === 'NotSupportedError') {
-                setPermissionError('Audio format not supported by your browser');
-              } else {
-                setPermissionError(`Audio playback failed: ${errorMessage || 'Unknown error'}`);
-              }
-              
-              setStatus('idle');
-            }
-          } else {
-            console.error('❌ Audio ref not available');
-            setStatus('idle');
-          }
-          
-        } catch (error: unknown) {
-          console.error('Processing error:', error);
-          const message =
-            (typeof (error as { message?: unknown })?.message === 'string' && (error as { message: string }).message) ||
-            'Failed to process audio';
-          setPermissionError(message);
-          setStatus('idle');
-        } finally {
-          setIsProcessing(false);
-        }
-      };
-
-      mediaRecorderRef.current = mediaRecorder;
-      
-      // Start recording with timeslice (collect data every 100ms)
-      mediaRecorder.start(100);
-      console.log('🎬 MediaRecorder started with timeslice=100ms');
-      
-      setStatus('recording');
-      setIsListening(true);
-      setRecordingDuration(0);
-      
-      // Start timer
-      recordingTimerRef.current = setInterval(() => {
-        setRecordingDuration(prev => prev + 1);
-      }, 1000);
-
-      console.log('✅ Recording started...');
-      
-    } catch (err: unknown) {
-      console.error("❌ Microphone access error:", err);
-      const errName =
-        (typeof (err as { name?: unknown })?.name === 'string' && (err as { name: string }).name) ||
-        '';
-      const errMessage =
-        (typeof (err as { message?: unknown })?.message === 'string' && (err as { message: string }).message) ||
-        '';
-      
-      let errorMessage = 'Failed to start recording';
-      
-      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
-        errorMessage = 'Microphone permission denied. Please allow microphone access.';
-      } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
-        errorMessage = 'No microphone found. Please connect a microphone.';
-      } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
-        errorMessage = 'Microphone is already in use.';
-      } else if (errName === 'SecurityError') {
-        errorMessage = 'Security error: Microphone requires HTTPS.';
-      } else if (errMessage) {
-        errorMessage = errMessage;
-      }
-      
-      setPermissionError(errorMessage);
-      setStatus('idle');
-      setIsListening(false);
-    }
-  }, [addToConversation, audioUrl, conversationHistory, setIsListening, setIsPlayingAudio, setStatus, unlockAudio]);
-
-  // Stop recording and auto-generate
-  const stopRecording = useCallback(() => {
-    console.log('🛑 Stopping recording...');
-    console.log('Current chunks before stop:', audioChunksRef.current.length);
-    
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      console.log('MediaRecorder state:', mediaRecorderRef.current.state);
-      
-      // Request data before stopping
-      if (mediaRecorderRef.current.state === 'recording') {
-        console.log('Requesting final data...');
-        mediaRecorderRef.current.requestData();
-      }
-      
-      // Stop after a small delay to ensure data is captured
-      setTimeout(() => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-          console.log('Now stopping MediaRecorder...');
-          mediaRecorderRef.current.stop();
-        }
-      }, 100);
-    }
-    
-    if (recordingTimerRef.current) {
-      clearInterval(recordingTimerRef.current);
-      recordingTimerRef.current = null;
-    }
-    
-    setIsListening(false);
-  }, [setIsListening]);
-
-
-
-  // Cancel/Reset everything
-  const resetSession = useCallback(() => {
-    console.log('🛑 Resetting session...');
-    
-    // Stop recording if active
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-    }
-    
-    // Clear recording timer
-    if (recordingTimerRef.current) {
-      clearInterval(recordingTimerRef.current);
-      recordingTimerRef.current = null;
-    }
-    
-    // Stop and cleanup media stream
-    if (stream) {
-      stream.getTracks().forEach(track => {
-        track.stop();
-        console.log('🔇 Stopped track:', track.kind);
-      });
-      setStream(null);
-    }
-    
-    // Stop audio playback
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
-    
-    // Reset all state
-    setIsListening(false);
-    setIsPlayingAudio(false);
-    setStatus('idle');
-    setIsProcessing(false);
-    setRecordingDuration(0);
-    audioChunksRef.current = [];
-    
-    console.log('✅ Session reset');
-  }, [stream, setIsListening, setStatus, setIsPlayingAudio]);
-
-  // Audio Ended Handler
-  const handleAudioEnded = useCallback(() => {
-    console.log('🔊 Audio playback ended');
-    setIsPlayingAudio(false);
-    setStatus('idle');
-  }, [setStatus, setIsPlayingAudio]);
-
-  // Close modal handler
   const closeModal = useCallback(() => {
-    resetSession();
-    clearConversation();
     setIsModalOpen(false);
-    setPermissionError(null);
-    setCurrentTranscription('');
-    setCurrentGeneration('');
-  }, [resetSession, clearConversation, setIsModalOpen]);
+    setMessages([]);
+    setInput('');
+    setError(null);
+    setIsSending(false);
+  }, [setIsModalOpen]);
 
-  // Format recording duration
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+  const sendMessage = useCallback(async () => {
+    const text = input.trim();
+    if (!text || isSending) return;
+
+    setError(null);
+    setIsSending(true);
+
+    const nextMessages: ChatMessage[] = [...messages, { role: 'user', content: text }];
+    setMessages(nextMessages);
+    setInput('');
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelId: selectedModel,
+          useRagContext,
+          messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
+        }),
+      });
+
+      const data = (await res.json()) as
+        | { message?: { role: 'assistant'; content: string }; ragContext?: string | null; error?: string }
+        | { error: string };
+
+      if (!res.ok) {
+        throw new Error(('error' in data && data.error) || 'Failed to send message');
+      }
+
+      const assistant = 'message' in data ? data.message : undefined;
+      if (!assistant?.content) throw new Error('Empty response');
+
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: assistant.content, ragContext: 'ragContext' in data ? data.ragContext ?? null : null },
+      ]);
+    } catch (e: unknown) {
+      const msg = (typeof (e as { message?: unknown })?.message === 'string' && (e as { message: string }).message) || 'Failed to send message';
+      setError(msg);
+    } finally {
+      setIsSending(false);
+      inputRef.current?.focus();
+    }
+  }, [input, isSending, messages, selectedModel, useRagContext]);
 
   if (!isModalOpen) return null;
 
   return (
     <>
       {/* Backdrop blur */}
-      <div 
-        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40"
-        onClick={closeModal}
-      />
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" onClick={closeModal} />
       
       {/* Modal */}
       <div className="fixed inset-0 z-50 flex items-center justify-center p-2 md:p-4">
-        <div className="relative bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-800 w-full max-w-3xl max-h-[70vh] flex flex-col overflow-hidden">
+        <div className="relative bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-800 w-full max-w-3xl max-h-[80vh] flex flex-col overflow-hidden">
           
           {/* Close button */}
           <button
@@ -494,201 +173,116 @@ export default function VoiceChat() {
 
           {/* Header */}
           <div className="px-4 py-3 md:px-6 md:py-4 border-b border-zinc-800 flex-shrink-0">
-            <h2 className="text-lg md:text-xl font-semibold text-white pr-10">Voice Assistant</h2>
-            <p className="text-xs md:text-sm text-zinc-400 mt-1">
-              {status === 'idle' ? 'Press Record to start' : 
-               status === 'recording' ? `Recording... ${formatDuration(recordingDuration)}` :
-               status === 'ready_to_generate' ? 'Press Generate to process' :
-               status === 'transcribing' ? 'Transcribing...' :
-               status === 'thinking' ? 'Thinking...' :
-               status === 'generating_audio' ? 'Generating response...' :
-               status === 'speaking' ? 'Speaking...' : ''}
-            </p>
+            <h2 className="text-lg md:text-xl font-semibold text-white pr-10">Chat</h2>
+
+            <div className="mt-3 flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <label className="block text-xs text-zinc-400 mb-1">Model</label>
+                  <select
+                    value={String(selectedModel)}
+                    onChange={(e) => setSelectedModel(e.target.value as ModelId)}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-zinc-500"
+                  >
+                    {allModels.map((m) => {
+                      const p = modelPricing[m.id];
+                      const suffix = p ? ` (${formatCost(p.prompt)}/M in, ${formatCost(p.completion)}/M out)` : '';
+                      return (
+                        <option key={m.id} value={m.id}>
+                          {m.name}{suffix}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2 pt-5">
+                  <span className="text-xs text-zinc-400">RAG</span>
+                  <button
+                    type="button"
+                    onClick={() => setUseRagContext((v) => !v)}
+                    className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${useRagContext ? 'bg-blue-600' : 'bg-zinc-700'}`}
+                    title={useRagContext ? 'RAG context enabled' : 'RAG context disabled'}
+                  >
+                    <div
+                      className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${useRagContext ? 'translate-x-5' : 'translate-x-1'}`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Error Display */}
-          {permissionError && (
+          {error && (
             <div className="mx-4 mt-3 md:mx-6 md:mt-4 bg-red-900/20 border border-red-500/30 rounded-lg p-2 md:p-3 flex-shrink-0">
-              <p className="text-xs md:text-sm text-red-300">{permissionError}</p>
+              <p className="text-xs md:text-sm text-red-300">{error}</p>
             </div>
           )}
 
-          {/* Mobile: Stack layout, Desktop: Two column layout */}
-          <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
-            
-            {/* Visualizer section */}
-            <div className="relative flex flex-col items-center justify-center md:flex-1 min-w-0 py-4">
-              <SimpleVisualizer 
-                status={status} 
-                stream={stream}
-                audioElement={audioRef.current}
-              />
+          <div className="flex-1 overflow-hidden flex flex-col">
+            <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 md:px-6 md:py-4 space-y-3">
+              {messages.length === 0 && (
+                <div className="text-sm text-zinc-500">Ask anything. Closing this popup clears the conversation.</div>
+              )}
 
-              {/* Control buttons */}
-              <div className="mt-4 flex flex-col gap-2 items-center">
-                {/* Idle state - Show Record button */}
-                {status === 'idle' && (
-                  <button
-                    onClick={startRecording}
-                    disabled={isProcessing}
-                    className="px-6 py-2.5 md:px-8 md:py-3 bg-red-600 hover:bg-red-700 active:bg-red-800 disabled:bg-zinc-700 disabled:cursor-not-allowed rounded-full text-white font-medium text-sm md:text-base shadow-lg transition-colors flex items-center gap-2"
+              {messages.map((m, idx) => (
+                <div key={idx} className={`flex flex-col gap-1 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
+                  <div className="text-[10px] text-zinc-500 px-1">{m.role === 'user' ? 'You' : 'Assistant'}</div>
+                  <div
+                    className={`max-w-[90%] md:max-w-[85%] px-3 py-2 rounded-lg text-sm border whitespace-pre-wrap break-words ${
+                      m.role === 'user'
+                        ? 'bg-cyan-900/30 text-cyan-100 border-cyan-800/30'
+                        : 'bg-purple-900/30 text-purple-100 border-purple-800/30'
+                    }`}
                   >
-                    <Mic size={18} />
-                    RECORD
-                  </button>
-                )}
-
-                {/* Recording state - Show Stop button */}
-                {status === 'recording' && (
-                  <button
-                    onClick={stopRecording}
-                    className="px-6 py-2.5 md:px-8 md:py-3 bg-zinc-700 hover:bg-zinc-600 active:bg-zinc-500 rounded-full text-white font-medium text-sm md:text-base shadow-lg transition-colors flex items-center gap-2"
-                  >
-                    <Square size={18} />
-                    STOP
-                  </button>
-                )}
-
-
-
-                {/* Processing states - Show status */}
-                {(status === 'transcribing' || status === 'thinking' || status === 'generating_audio' || status === 'speaking') && (
-                  <div className="px-6 py-2.5 text-sm text-zinc-400">
-                    Processing...
+                    {m.content}
                   </div>
-                )}
-              </div>
+                  {m.role === 'assistant' && m.ragContext && (
+                    <div className="max-w-[90%] md:max-w-[85%] px-3 py-2 rounded-lg text-[11px] border border-violet-900/40 bg-violet-950/20 text-violet-200">
+                      <div className="text-zinc-400 mb-1">Context used</div>
+                      <div className="whitespace-pre-wrap break-words">{m.ragContext}</div>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {isSending && (
+                <div className="text-sm text-zinc-500">Assistant is typing…</div>
+              )}
             </div>
 
-            {/* Live conversation view */}
-            {(status !== 'idle' || conversationHistory.length > 0) && (
-              <div className="flex-1 md:w-80 md:flex-none border-t md:border-t-0 md:border-l border-zinc-800 flex flex-col bg-zinc-950/50">
-                <div className="px-3 py-2 md:px-4 md:py-3 border-b border-zinc-800 flex-shrink-0">
-                  <h3 className="text-xs md:text-sm font-semibold text-zinc-300">Live Transcript</h3>
-                </div>
-                
-                <div 
-                  ref={conversationScrollRef}
-                  className="flex-1 overflow-y-auto px-3 py-2 md:px-4 md:py-3 space-y-2 md:space-y-3 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent flex flex-col-reverse"
-                >
-                  {/* Current generation (while generating) - Shows first (at top) */}
-                  {currentGeneration && (
-                    <div className="flex flex-col gap-0.5 md:gap-1 items-start animate-pulse">
-                      <span className="text-[10px] md:text-xs text-zinc-500 px-1">AI (generating...)</span>
-                      <div className="px-2.5 py-1.5 md:px-3 md:py-2 rounded-lg text-xs md:text-sm max-w-[90%] md:max-w-[85%] bg-purple-900/40 text-purple-100 border border-purple-700/50">
-                        {currentGeneration}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Current transcription (while transcribing) - Shows first (at top) */}
-                  {currentTranscription && (
-                    <div className="flex flex-col gap-0.5 md:gap-1 items-end animate-pulse">
-                      <span className="text-[10px] md:text-xs text-zinc-500 px-1">You (transcribing...)</span>
-                      <div className="px-2.5 py-1.5 md:px-3 md:py-2 rounded-lg text-xs md:text-sm max-w-[90%] md:max-w-[85%] bg-cyan-900/40 text-cyan-100 border border-cyan-700/50">
-                        {currentTranscription}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Past conversation history - Reversed (newest first) */}
-                  {[...conversationHistory].reverse().map((msg, idx) => (
-                    <div 
-                      key={conversationHistory.length - 1 - idx} 
-                      className={`flex flex-col gap-0.5 md:gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
-                    >
-                      <span className="text-[10px] md:text-xs text-zinc-500 px-1">
-                        {msg.role === 'user' ? 'You' : 'AI'}
-                      </span>
-                      <div 
-                        className={`px-2.5 py-1.5 md:px-3 md:py-2 rounded-lg text-xs md:text-sm max-w-[90%] md:max-w-[85%] ${
-                          msg.role === 'user' 
-                            ? 'bg-cyan-900/30 text-cyan-100 border border-cyan-800/30' 
-                            : 'bg-purple-900/30 text-purple-100 border border-purple-800/30'
-                        }`}
-                      >
-                        {msg.content}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Hidden Audio Element */}
-          <audio 
-            ref={audioRef} 
-            onEnded={handleAudioEnded}
-            onError={(e) => {
-              try {
-                const audioElement = e.currentTarget;
-                const error = audioElement.error;
-                console.log('❌ Audio element error:', {
-                  code: error?.code,
-                  message: error?.message,
-                  src: audioElement.src,
-                  networkState: audioElement.networkState,
-                  readyState: audioElement.readyState,
-                });
-                
-                let errorMessage = 'Audio failed to load';
-                if (error?.code) {
-                  switch (error.code) {
-                    case 1: // MEDIA_ERR_ABORTED
-                      errorMessage = 'Audio loading was aborted';
-                      break;
-                    case 2: // MEDIA_ERR_NETWORK
-                      errorMessage = 'Network error while loading audio';
-                      break;
-                    case 3: // MEDIA_ERR_DECODE
-                      errorMessage = 'Audio format not supported or corrupted';
-                      break;
-                    case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
-                      errorMessage = 'Audio source not supported';
-                      break;
-                  }
-                }
-                
-                setPermissionError(errorMessage);
-                setStatus('idle');
-                setIsPlayingAudio(false);
-              } catch (err) {
-                console.log('Error in audio error handler:', err);
-                setPermissionError('Audio playback error');
-                setStatus('idle');
-                setIsPlayingAudio(false);
-              }
-            }}
-            onLoadedData={() => console.log('✅ Audio loaded successfully')}
-            onCanPlay={() => console.log('✅ Audio can play')}
-            onPlay={() => console.log('▶️ Audio started playing')}
-            onPause={() => console.log('⏸️ Audio paused')}
-            playsInline
-            className="hidden" 
-          />
-          
-          {/* Manual play button if autoplay fails */}
-          {audioUrl && !isPlayingAudio && status === 'idle' && (
-            <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-10">
-              <button
-                onClick={async () => {
-                  if (audioRef.current) {
-                    try {
-                      await audioRef.current.play();
-                      setIsPlayingAudio(true);
-                      setStatus('speaking');
-                    } catch (err) {
-                      console.error('Manual play failed:', err);
+            <div className="border-t border-zinc-800 p-3 md:p-4">
+              <div className="flex gap-2">
+                <input
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      void sendMessage();
                     }
-                  }
-                }}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-full text-white text-sm shadow-lg"
-              >
-                ▶️ Play Response
-              </button>
+                  }}
+                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-zinc-500"
+                  placeholder="Type a message…"
+                  disabled={isSending}
+                />
+                <button
+                  type="button"
+                  onClick={() => { void sendMessage(); }}
+                  disabled={isSending || !input.trim()}
+                  className="px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white transition-colors"
+                  title="Send"
+                >
+                  <Send size={18} />
+                </button>
+              </div>
+              <div className="mt-2 text-xs text-zinc-500">
+                {useRagContext ? 'RAG is enabled: each user message pulls relevant context.' : 'RAG is disabled.'}
+              </div>
             </div>
-          )}
+          </div>
         </div>
       </div>
     </>
