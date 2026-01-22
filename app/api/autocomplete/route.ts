@@ -97,15 +97,24 @@ export async function POST(request: NextRequest) {
     const userPromptText = prompt || 'Provide a two sentence long completion to this text:';
     const userPrompt = new HumanMessage(`${userPromptText} ${text}`);
 
+    const messages = [systemPrompt, userPrompt];
+
     console.log('\n========== API CALL ==========');
     console.log('Model:', modelId || DEFAULT_MODEL);
     console.log('==============================\n');
-    console.log('Prompt:', userPromptText);
+    console.log('Client text (used as query + generation seed):', text);
+    console.log('Prompt (custom/user):', userPromptText);
+    console.log('RAG context included:', ragContext ? 'YES' : 'NO');
+    if (ragContext) {
+      console.log('---RAG CONTEXT START---\n' + ragContext + '\n---RAG CONTEXT END---');
+    }
     console.log('==============================\n');
-    console.log('Full message:', `${userPromptText} ${text}`);
+    console.log('---SYSTEM PROMPT START---\n' + systemPromptContent + '\n---SYSTEM PROMPT END---');
+    console.log('==============================\n');
+    console.log('---USER MESSAGE START---\n' + `${userPromptText} ${text}` + '\n---USER MESSAGE END---');
     console.log('==============================\n');
 
-    const response = await model.invoke([systemPrompt, userPrompt]);
+    const response = await model.invoke(messages);
 
     const completion = typeof response.content === 'string' 
       ? response.content 
