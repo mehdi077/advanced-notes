@@ -378,20 +378,6 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       const blob = new Blob([buffer], { type: contentType });
       const url = URL.createObjectURL(blob);
       setTtsAudioUrl(url);
-
-      if (ttsAudioRef.current) {
-        const audioElement = ttsAudioRef.current;
-        audioElement.src = url;
-        audioElement.currentTime = 0;
-
-        try {
-          await audioElement.play();
-          setIsTtsPlaying(true);
-        } catch (error) {
-          setIsTtsPlaying(false);
-          setTtsError('Autoplay blocked. Press play to listen.');
-        }
-      }
     } catch (error: any) {
       if (error?.name === 'AbortError') return;
       setTtsError(error?.message || 'Failed to generate audio');
@@ -455,6 +441,18 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       }
     };
   }, []);
+
+  // Auto-play TTS when audio URL becomes available
+  useEffect(() => {
+    if (ttsAudioUrl && ttsAudioRef.current) {
+      const audio = ttsAudioRef.current;
+      audio.play().then(() => {
+        setIsTtsPlaying(true);
+      }).catch(() => {
+        setTtsError('Autoplay blocked. Press play to listen.');
+      });
+    }
+  }, [ttsAudioUrl]);
 
   // Save prompts when they change (after initial load)
   useEffect(() => {
