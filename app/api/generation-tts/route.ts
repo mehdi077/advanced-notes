@@ -1,6 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 
+type GroqTtsResponse = {
+  arrayBuffer: () => Promise<ArrayBuffer>;
+};
+
+type GroqAudioSpeech = {
+  speech: {
+    create: (args: {
+      model: string;
+      voice: string;
+      input: string;
+      response_format: 'wav';
+    }) => Promise<GroqTtsResponse>;
+  };
+};
+
 export async function POST(req: NextRequest) {
   try {
     if (!process.env.GROQ_API_KEY) {
@@ -21,7 +36,8 @@ export async function POST(req: NextRequest) {
 
     const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-    const speechResponse = await (groq.audio as any).speech.create({
+    const audio = groq.audio as unknown as GroqAudioSpeech;
+    const speechResponse = await audio.speech.create({
       model: 'canopylabs/orpheus-v1-english',
       voice: 'daniel',
       input: text.trim(),
@@ -43,9 +59,14 @@ export async function POST(req: NextRequest) {
         'Content-Length': audioBuffer.byteLength.toString(),
       },
     });
-  } catch (error: any) {
-    const message = error?.message || 'Failed to generate audio';
-    const status = error?.response?.status || 500;
+  } catch (error: unknown) {
+    const message =
+      (typeof (error as { message?: unknown })?.message === 'string' && (error as { message: string }).message) ||
+      'Failed to generate audio';
+    const status =
+      (typeof (error as { response?: { status?: unknown } })?.response?.status === 'number' &&
+        (error as { response: { status: number } }).response.status) ||
+      500;
     return NextResponse.json({ error: message }, { status });
   }
 }

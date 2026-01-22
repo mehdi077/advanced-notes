@@ -53,8 +53,6 @@ export default function SimpleVisualizer({ status, stream, audioElement }: Simpl
           audioContextRef.current.close();
         }
       };
-    } else {
-      setAudioLevel(0);
     }
   }, [status, stream]);
 
@@ -98,8 +96,6 @@ export default function SimpleVisualizer({ status, stream, audioElement }: Simpl
           audioContextRef.current.close();
         }
       };
-    } else if (status !== 'recording') {
-      setAudioLevel(0);
     }
   }, [status, audioElement]);
   
@@ -159,29 +155,30 @@ export default function SimpleVisualizer({ status, stream, audioElement }: Simpl
   };
 
   const shouldPulse = status === 'recording' || status === 'speaking';
-  const scale = 1 + (audioLevel * 0.3);
+  const effectiveAudioLevel = shouldPulse ? audioLevel : 0;
+  const scale = 1 + (effectiveAudioLevel * 0.3);
 
   return (
     <div className="flex flex-col items-center justify-center gap-4 py-6">
       {/* Status indicator with audio-reactive pulse */}
       <div className="relative w-24 h-24 flex items-center justify-center">
         {/* Pulse rings - audio-reactive for listening and speaking */}
-        {shouldPulse && audioLevel > 0.05 && (
+        {shouldPulse && effectiveAudioLevel > 0.05 && (
           <>
             <div 
               className={`absolute rounded-full border-2 ${getRingColor()} transition-all`} 
               style={{
-                width: `${80 + (audioLevel * 40)}px`,
-                height: `${80 + (audioLevel * 40)}px`,
-                opacity: 0.6 * audioLevel,
+                width: `${80 + (effectiveAudioLevel * 40)}px`,
+                height: `${80 + (effectiveAudioLevel * 40)}px`,
+                opacity: 0.6 * effectiveAudioLevel,
               }}
             />
             <div 
               className={`absolute rounded-full border-2 ${getRingColor()} transition-all`} 
               style={{
-                width: `${100 + (audioLevel * 60)}px`,
-                height: `${100 + (audioLevel * 60)}px`,
-                opacity: 0.4 * audioLevel,
+                width: `${100 + (effectiveAudioLevel * 60)}px`,
+                height: `${100 + (effectiveAudioLevel * 60)}px`,
+                opacity: 0.4 * effectiveAudioLevel,
               }}
             />
           </>

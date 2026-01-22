@@ -4,7 +4,28 @@ import crypto from 'crypto';
 
 const EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
 const CHUNK_SIZE = 500; // characters per chunk
-const CHUNK_OVERLAP = 100;
+
+const FALLBACK_DOC_IDS = ['infinite-doc-v1', 'main'];
+
+function getDocumentContent(docId?: string | null): string {
+  const tryGetById = (id: string) => {
+    const row = db.prepare('SELECT content FROM documents WHERE id = ?').get(id) as { content: string } | undefined;
+    return row?.content || '';
+  };
+
+  if (docId) {
+    const byId = tryGetById(docId);
+    if (byId) return byId;
+  }
+
+  for (const id of FALLBACK_DOC_IDS) {
+    const byFallback = tryGetById(id);
+    if (byFallback) return byFallback;
+  }
+
+  const latest = db.prepare('SELECT content FROM documents ORDER BY updated_at DESC LIMIT 1').get() as { content: string } | undefined;
+  return latest?.content || '';
+}
 
 function hashText(text: string): string {
   return crypto.createHash('sha256').update(text).digest('hex');
@@ -32,6 +53,30 @@ function chunkText(text: string): string[] {
   return chunks.filter(c => c.length > 20); // Filter out very small chunks
 }
 
+function extractPlainTextFromDocumentContent(content: string): string {
+  if (!content) return '';
+  try {
+    const parsed = JSON.parse(content);
+    const extractText = (node: unknown): string => {
+      if (typeof node === 'string') return node;
+      if (!node || typeof node !== 'object') return '';
+
+      const maybeText = (node as { text?: unknown }).text;
+      if (typeof maybeText === 'string') return maybeText;
+
+      const maybeContent = (node as { content?: unknown }).content;
+      if (Array.isArray(maybeContent)) {
+        return maybeContent.map(extractText).join(' ');
+      }
+
+      return '';
+    };
+    return extractText(parsed);
+  } catch {
+    return content;
+  }
+}
+
 async function getEmbedding(text: string): Promise<number[]> {
   const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
     method: 'POST',
@@ -56,33 +101,15 @@ async function getEmbedding(text: string): Promise<number[]> {
 }
 
 // GET - Get embedding status
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const doc = db.prepare('SELECT content FROM documents WHERE id = ?').get('main') as { content: string } | undefined;
-    const content = doc?.content || '';
-    
-    // Parse JSON content to extract text
-    let textContent = '';
-    try {
-      const parsed = JSON.parse(content);
-      const extractText = (node: any): string => {
-        if (typeof node === 'string') return node;
-        if (node.text) return node.text;
-        if (node.content && Array.isArray(node.content)) {
-          return node.content.map(extractText).join(' ');
-        }
-        return '';
-      };
-      textContent = extractText(parsed);
-    } catch {
-      textContent = content;
-    }
+    const { searchParams } = new URL(request.url);
+    const docId = searchParams.get('id');
+    const content = getDocumentContent(docId);
+    const textContent = extractPlainTextFromDocumentContent(content);
 
     const chunks = chunkText(textContent);
     const totalChunks = chunks.length;
-    
-    // Count embedded chunks
-    const embeddedCount = (db.prepare('SELECT COUNT(*) as count FROM embeddings').get() as { count: number }).count;
     
     // Get chunk hashes that are already embedded
     const existingHashes = new Set(
@@ -98,13 +125,13 @@ export async function GET() {
       }
     }
 
-    const percentage = totalChunks > 0 ? Math.round((embeddedCurrentChunks / totalChunks) * 100) : 100;
+    const percentage = totalChunks > 0 ? Math.round((embeddedCurrentChunks / totalChunks) * 100) : 0;
 
     return NextResponse.json({
       totalChunks,
       embeddedChunks: embeddedCurrentChunks,
       percentage,
-      needsUpdate: embeddedCurrentChunks < totalChunks,
+      needsUpdate: totalChunks > 0 && embeddedCurrentChunks < totalChunks,
     });
   } catch (error) {
     console.error('Embedding status error:', error);
@@ -118,26 +145,10 @@ export async function POST(request: NextRequest) {
     if (!process.env.OPENROUTER_API_KEY) {
       return NextResponse.json({ error: 'OPENROUTER_API_KEY not set' }, { status: 500 });
     }
-
-    const doc = db.prepare('SELECT content FROM documents WHERE id = ?').get('main') as { content: string } | undefined;
-    const content = doc?.content || '';
-    
-    // Parse JSON content to extract text
-    let textContent = '';
-    try {
-      const parsed = JSON.parse(content);
-      const extractText = (node: any): string => {
-        if (typeof node === 'string') return node;
-        if (node.text) return node.text;
-        if (node.content && Array.isArray(node.content)) {
-          return node.content.map(extractText).join(' ');
-        }
-        return '';
-      };
-      textContent = extractText(parsed);
-    } catch {
-      textContent = content;
-    }
+    const { searchParams } = new URL(request.url);
+    const docId = searchParams.get('id');
+    const content = getDocumentContent(docId);
+    const textContent = extractPlainTextFromDocumentContent(content);
 
     const chunks = chunkText(textContent);
     

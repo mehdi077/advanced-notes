@@ -281,21 +281,29 @@ export default function VoiceChat() {
                 // Remove error listener if play succeeds
                 audioElement.removeEventListener('error', handleLoadError);
               }
-            } catch (error: any) {
+            } catch (error: unknown) {
+              const errorName =
+                (typeof (error as { name?: unknown })?.name === 'string' && (error as { name: string }).name) ||
+                '';
+              const errorMessage =
+                (typeof (error as { message?: unknown })?.message === 'string' &&
+                  (error as { message: string }).message) ||
+                '';
+
               console.error("❌ Autoplay failed:", error);
-              console.error("Error name:", error.name);
-              console.error("Error message:", error.message);
+              console.error("Error name:", errorName);
+              console.error("Error message:", errorMessage);
               
               // Remove error listener
               audioElement.removeEventListener('error', handleLoadError);
               
               // Set error with helpful message
-              if (error.name === 'NotAllowedError') {
+              if (errorName === 'NotAllowedError') {
                 setPermissionError('Browser blocked autoplay. Please click the audio player to play.');
-              } else if (error.name === 'NotSupportedError') {
+              } else if (errorName === 'NotSupportedError') {
                 setPermissionError('Audio format not supported by your browser');
               } else {
-                setPermissionError(`Audio playback failed: ${error.message}`);
+                setPermissionError(`Audio playback failed: ${errorMessage || 'Unknown error'}`);
               }
               
               setStatus('idle');
@@ -308,9 +316,12 @@ export default function VoiceChat() {
           // Clear recorded blob
           setRecordedAudioBlob(null);
           
-        } catch (error: any) {
+        } catch (error: unknown) {
           console.error('Processing error:', error);
-          setPermissionError(error.message || 'Failed to process audio');
+          const message =
+            (typeof (error as { message?: unknown })?.message === 'string' && (error as { message: string }).message) ||
+            'Failed to process audio';
+          setPermissionError(message);
           setStatus('idle');
         } finally {
           setIsProcessing(false);
@@ -334,21 +345,27 @@ export default function VoiceChat() {
 
       console.log('✅ Recording started...');
       
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("❌ Microphone access error:", err);
+      const errName =
+        (typeof (err as { name?: unknown })?.name === 'string' && (err as { name: string }).name) ||
+        '';
+      const errMessage =
+        (typeof (err as { message?: unknown })?.message === 'string' && (err as { message: string }).message) ||
+        '';
       
       let errorMessage = 'Failed to start recording';
       
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
         errorMessage = 'Microphone permission denied. Please allow microphone access.';
-      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+      } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
         errorMessage = 'No microphone found. Please connect a microphone.';
-      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+      } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
         errorMessage = 'Microphone is already in use.';
-      } else if (err.name === 'SecurityError') {
+      } else if (errName === 'SecurityError') {
         errorMessage = 'Security error: Microphone requires HTTPS.';
-      } else if (err.message) {
-        errorMessage = err.message;
+      } else if (errMessage) {
+        errorMessage = errMessage;
       }
       
       setPermissionError(errorMessage);

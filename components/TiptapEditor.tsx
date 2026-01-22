@@ -415,9 +415,13 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       const blob = new Blob([buffer], { type: contentType });
       const url = URL.createObjectURL(blob);
       setTtsAudioUrl(url);
-    } catch (error: any) {
-      if (error?.name === 'AbortError') return;
-      setTtsError(error?.message || 'Failed to generate audio');
+    } catch (error: unknown) {
+      const name = (error as { name?: unknown })?.name;
+      if (name === 'AbortError') return;
+      const message =
+        (typeof (error as { message?: unknown })?.message === 'string' && (error as { message: string }).message) ||
+        'Failed to generate audio';
+      setTtsError(message);
     } finally {
       setIsTtsLoading(false);
       if (ttsAbortControllerRef.current === controller) {
@@ -531,7 +535,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     const lastBreak = Math.max(lastPeriod, lastNewline);
 
     // Get text from last break to cursor, or all text if no break found
-    let textForCompletion = lastBreak >= 0
+    const textForCompletion = lastBreak >= 0
       ? textUpToCursor.slice(lastBreak + 1).trim()
       : textUpToCursor.trim();
 

@@ -3,6 +3,21 @@ import Groq from 'groq-sdk';
 import { ChatGroq } from '@langchain/groq';
 import { HumanMessage, AIMessage, SystemMessage, BaseMessage } from '@langchain/core/messages';
 
+type GroqTtsResponse = {
+    arrayBuffer: () => Promise<ArrayBuffer>;
+};
+
+type GroqAudioSpeech = {
+    speech: {
+        create: (args: {
+            model: string;
+            voice: string;
+            input: string;
+            response_format: 'wav';
+        }) => Promise<GroqTtsResponse>;
+    };
+};
+
 // System prompt for the voice assistant
 const SYSTEM_PROMPT = `You are a helpful voice assistant. Provide clear, concise responses suitable for spoken conversation. Keep responses brief and natural.`;
 
@@ -32,7 +47,7 @@ export async function POST(req: NextRequest) {
             }, { status: 500 });
         }
 
-        console.log('✅ API Key found:', apiKey.substring(0, 10) + '...');
+        console.log('✅ API Key found');
 
         const groq = new Groq({
             apiKey: apiKey,
@@ -74,10 +89,13 @@ export async function POST(req: NextRequest) {
                 response_format: 'json',
                 temperature: 0.0,
             });
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('❌ Transcription error:', error);
+            const message =
+                (typeof (error as { message?: unknown })?.message === 'string' && (error as { message: string }).message) ||
+                'Unknown error';
             return NextResponse.json({ 
-                error: 'Failed to transcribe audio: ' + (error.message || 'Unknown error') 
+                error: 'Failed to transcribe audio: ' + message
             }, { status: 500 });
         }
 
@@ -123,10 +141,13 @@ export async function POST(req: NextRequest) {
             responseText = (aiResponse.content as string).trim();
             
             console.log(`✅ LLM Response (${Date.now() - llmStart}ms):`, responseText);
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('❌ LLM error:', error);
+            const message =
+                (typeof (error as { message?: unknown })?.message === 'string' && (error as { message: string }).message) ||
+                'Unknown error';
             return NextResponse.json({ 
-                error: 'Failed to generate response: ' + (error.message || 'Unknown error') 
+                error: 'Failed to generate response: ' + message
             }, { status: 500 });
         }
 
@@ -139,10 +160,11 @@ export async function POST(req: NextRequest) {
         const ttsStart = Date.now();
         
         let audioArrayBuffer: ArrayBuffer;
-        let audioFormat = 'wav'; // Groq only supports WAV format
+        const audioFormat = 'wav'; // Groq only supports WAV format
         
         try {
-            const speechResponse = await (groq.audio as any).speech.create({
+            const audio = groq.audio as unknown as GroqAudioSpeech;
+            const speechResponse = await audio.speech.create({
                 model: 'canopylabs/orpheus-v1-english', 
                 voice: 'daniel',
                 input: responseText,
@@ -166,10 +188,13 @@ export async function POST(req: NextRequest) {
             } else {
                 console.log('✅ Valid WAV header detected');
             }
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('❌ TTS error:', error);
+            const message =
+                (typeof (error as { message?: unknown })?.message === 'string' && (error as { message: string }).message) ||
+                'Unknown error';
             return NextResponse.json({ 
-                error: 'Failed to generate speech: ' + (error.message || 'Unknown error') 
+                error: 'Failed to generate speech: ' + message
             }, { status: 500 });
         }
 
@@ -185,10 +210,13 @@ export async function POST(req: NextRequest) {
             },
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('❌ Voice API error:', error);
+        const message =
+            (typeof (error as { message?: unknown })?.message === 'string' && (error as { message: string }).message) ||
+            'Internal server error';
         return NextResponse.json({ 
-            error: error.message || 'Internal server error' 
+            error: message
         }, { status: 500 });
     }
 }

@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+
+    // Project-specific ignores (vendored/generated assets and reference projects)
+    "public/**",
+    "reference-projs/**",
+    "dataBackup/**",
   ]),
 ]);
 
