@@ -3,13 +3,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import SimpleVisualizer from '@/components/SimpleVisualizer';
-import { X, Mic, Square, Send } from 'lucide-react';
+import { X, Mic, Square } from 'lucide-react';
 
 export default function VoiceChat() {
   const { 
     status, 
     setStatus, 
-    isListening, 
     setIsListening,
     isPlayingAudio,
     setIsPlayingAudio,
@@ -33,12 +32,12 @@ export default function VoiceChat() {
   // Manual recording state
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
+    const audio = audioRef.current;
     return () => {
       // Cleanup audio URLs
       if (audioUrl) {
@@ -49,9 +48,9 @@ export default function VoiceChat() {
         stream.getTracks().forEach(track => track.stop());
       }
       // Stop audio playback
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = '';
+      if (audio) {
+        audio.pause();
+        audio.src = '';
       }
       // Clear recording timer
       if (recordingTimerRef.current) {
@@ -167,9 +166,6 @@ export default function VoiceChat() {
           setStatus('idle');
           return;
         }
-        
-        // Auto-generate immediately after stopping
-        setRecordedAudioBlob(audioBlob);
         
         // Process the audio automatically
         try {
@@ -313,9 +309,6 @@ export default function VoiceChat() {
             setStatus('idle');
           }
           
-          // Clear recorded blob
-          setRecordedAudioBlob(null);
-          
         } catch (error: unknown) {
           console.error('Processing error:', error);
           const message =
@@ -372,7 +365,7 @@ export default function VoiceChat() {
       setStatus('idle');
       setIsListening(false);
     }
-  }, [setStatus, setIsListening, unlockAudio]);
+  }, [addToConversation, audioUrl, conversationHistory, setIsListening, setIsPlayingAudio, setStatus, unlockAudio]);
 
   // Stop recording and auto-generate
   const stopRecording = useCallback(() => {
@@ -442,7 +435,6 @@ export default function VoiceChat() {
     setIsPlayingAudio(false);
     setStatus('idle');
     setIsProcessing(false);
-    setRecordedAudioBlob(null);
     setRecordingDuration(0);
     audioChunksRef.current = [];
     

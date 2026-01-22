@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { debounce } from 'lodash';
 import TiptapEditor from '../components/TiptapEditor';
 import VoiceChat from '../components/VoiceChat';
@@ -34,8 +34,8 @@ export default function Home() {
   }, []);
 
   // Debounced save function
-  const saveContent = useCallback(
-    debounce(async (newContent: object) => {
+  const saveContent = useMemo(() => {
+    return debounce(async (newContent: object) => {
       try {
         await fetch('/api/doc', {
           method: 'POST',
@@ -46,9 +46,14 @@ export default function Home() {
       } catch (e) {
         console.error('Failed to save doc', e);
       }
-    }, 1000),
-    [DOC_ID]
-  );
+    }, 1000);
+  }, [DOC_ID]);
+
+  useEffect(() => {
+    return () => {
+      saveContent.cancel();
+    };
+  }, [saveContent]);
 
   const handleUpdate = (newContent: object) => {
     saveContent(newContent);

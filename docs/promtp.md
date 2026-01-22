@@ -9,3 +9,18 @@ build a scelton infurstructure of a web app that does the following: for now don
 
 
 refer to <> to know how to implement the following request properly (and also to <open router docs>): whenever a user clicks the geenerate button, the app will do exactly as it is doing currently, pull the text until the last dot or new line, and pass it with a prompt already specified, no the feature i wanna add is, i wanna use rag, so basicly, in the left side panel, add a section where it shows a status, that status will be meant to see how much of the text that is now in the database is already embedded, if it is all than make it say 100% with a cool UI, if not all than say how much is in percentage, and have a button, where when clicked, it embeds all the text that is still not embeded yet, and add it to the one that is already embeded, and update the % accordignly, for the embeding , use qwen/qwen3-embedding-8b from open router to do the embedding, and make sure the embeding will be saved in the same data.db file as the text and all relevent settings (so it would be esier to access or move just one file for backup or whatever the suer wants to do with thier data), now back to the generation process, after the user clicks the generate button, cick off the rag and do its thing, and with a relevent promopt as well, pass the relvent data to the original formed prompt, that way, the user expects a more comprehnsive generated text, that takes into accont relevent points of the past text, and not just the text until the last dot or new line, basicly a rag system implemented
+
+---------------------------------------------------------------------------------------------------------
+
+
+
+
+fix the following issues, in movile view, make the auio control panel be at the bottom of the screen, and add into that control 
+   panel a speed playback button, when pressed once it makes the audio goes 1.5x faster, pressed a second time, 2x faster, pressed a third 
+   time, 2.5x faster, pressed one more time, goes back to 1x, in a loop like this, the second issue need to be fixed, is the audio doesn't 
+   play autamiticly as soon as it is generated and avilable, make it be so, without having to press play button after it gets generated, and 
+   third, have a switch in the left side panel, where it turns on and off the inclusiion of the embeding context into the prompt, so i choose
+    if a certain generation i want to use the context of the whole text or not at will, and fourth, in the right side pannel, add a section, 
+   where it is sumilar to the logs, after pressing the generate button, it shows the full prompt sent as a request to the model, where it is 
+   scrolable to check out what is happening without going back to the console log, and after i accept or reject the generated text, it 
+   desepers form the side panel, not to be saved at aLL, so it is visible just until the acceptance of the generated text, like the audio

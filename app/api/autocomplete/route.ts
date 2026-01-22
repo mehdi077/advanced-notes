@@ -68,7 +68,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { text, modelId, prompt } = await request.json();
+    const body = (await request.json()) as Record<string, unknown>;
+    const text = body.text;
+    const modelId = body.modelId;
+    const prompt = body.prompt;
+    const useRagContext = body.useRagContext !== false;
 
     if (!text || typeof text !== 'string') {
       return NextResponse.json(
@@ -79,8 +83,8 @@ export async function POST(request: NextRequest) {
 
     const model = getOpenRouterModel((modelId as ModelId) || DEFAULT_MODEL);
 
-    // Get RAG context
-    const ragContext = await getRAGContext(text);
+    // Get RAG context (optional)
+    const ragContext = useRagContext ? await getRAGContext(text) : '';
 
     let systemPromptContent = 'You are a writing assistant. Your task is to continue the user\'s text naturally. ' +
       'Respond with ONLY the completion text, nothing else. ' +
@@ -94,7 +98,7 @@ export async function POST(request: NextRequest) {
 
     const systemPrompt = new SystemMessage(systemPromptContent);
 
-    const userPromptText = prompt || 'Provide a two sentence long completion to this text:';
+    const userPromptText = typeof prompt === 'string' && prompt.trim() ? prompt : 'Provide a two sentence long completion to this text:';
     const userPrompt = new HumanMessage(`${userPromptText} ${text}`);
 
     const messages = [systemPrompt, userPrompt];
@@ -127,13 +131,26 @@ export async function POST(request: NextRequest) {
     const promptTokens = usage.prompt_tokens || usage.input_tokens || 0;
     const completionTokens = usage.completion_tokens || usage.output_tokens || 0;
 
+    const requestPreview = {
+      model: (typeof modelId === 'string' && modelId) ? modelId : DEFAULT_MODEL,
+      useRagContext,
+      ragContext: ragContext || null,
+      systemPrompt: systemPromptContent,
+      userMessage: `${userPromptText} ${text}`,
+      messages: [
+        { role: 'system' as const, content: systemPromptContent },
+        { role: 'user' as const, content: `${userPromptText} ${text}` },
+      ],
+    };
+
     return NextResponse.json({ 
       completion,
       usage: {
         promptTokens,
         completionTokens,
         totalTokens: promptTokens + completionTokens,
-      }
+      },
+      requestPreview,
     });
   } catch (error) {
     console.error('Autocomplete error:', error);

@@ -5,10 +5,10 @@ import StarterKit from '@tiptap/starter-kit';
 import { TextStyle } from '@tiptap/extension-text-style';
 import { Color } from '@tiptap/extension-color';
 import { Highlight } from '@tiptap/extension-highlight';
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { debounce } from 'lodash';
-import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, Mic, Play, Square, Pause, SkipBack, SkipForward, Database } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, Mic, Play, Pause, SkipBack, SkipForward, Database } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
 import { CompletionMark } from '@/lib/completion-mark';
@@ -47,6 +47,15 @@ interface ModelPricingMap {
   [modelId: string]: ModelPricing;
 }
 
+interface AutocompleteRequestPreview {
+  model: string;
+  useRagContext: boolean;
+  ragContext: string | null;
+  systemPrompt: string;
+  userMessage: string;
+  messages: Array<{ role: 'system' | 'user'; content: string }>;
+}
+
 const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
@@ -80,6 +89,9 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const [isEmbedding, setIsEmbedding] = useState(false);
   const [embeddingError, setEmbeddingError] = useState<string | null>(null);
 
+  const [useRagContext, setUseRagContext] = useState(true);
+  const [lastRequestPreview, setLastRequestPreview] = useState<AutocompleteRequestPreview | null>(null);
+
   // TTS playback state for generated ghost text
   const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
   const [isTtsLoading, setIsTtsLoading] = useState(false);
@@ -87,8 +99,10 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const [ttsError, setTtsError] = useState<string | null>(null);
   const [ttsCurrentTime, setTtsCurrentTime] = useState(0);
   const [ttsDuration, setTtsDuration] = useState(0);
+  const [ttsPlaybackRate, setTtsPlaybackRate] = useState(1);
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
   const ttsAbortControllerRef = useRef<AbortController | null>(null);
+  const ttsUnlockedRef = useRef(false);
   
   // Saved completion popup state
   const [savedCompletionPopup, setSavedCompletionPopup] = useState<{ isOpen: boolean; content: string }>({
@@ -312,9 +326,8 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     }
   }, []);
 
-  // Debounced save prompts function
-  const savePrompts = useCallback(
-    debounce(async (prompt: string, regenTemplate: string) => {
+  const savePrompts = useMemo(() => {
+    return debounce(async (prompt: string, regenTemplate: string) => {
       try {
         await fetch('/api/prompts', {
           method: 'POST',
@@ -324,9 +337,14 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       } catch (error) {
         console.error('Failed to save prompts:', error);
       }
-    }, 1000),
-    []
-  );
+    }, 1000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      savePrompts.cancel();
+    };
+  }, [savePrompts]);
 
   // Fetch RAG embedding status
   const fetchRagStatus = useCallback(async () => {
@@ -353,7 +371,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         const data = await response.json();
         setEmbeddingError(data.error || 'Failed to embed');
       }
-    } catch (error) {
+    } catch {
       setEmbeddingError('Failed to embed document');
     } finally {
       setIsEmbedding(false);
@@ -380,6 +398,19 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     setIsTtsPlaying(false);
     setTtsError(null);
   }, [ttsAudioUrl]);
+
+  const unlockTtsAudio = useCallback(async () => {
+    if (ttsUnlockedRef.current) return;
+    try {
+      const silentAudio = new Audio('data:audio/wav;base64,UklGRi9AAABAAAAAAABAAEA8AEAAP///AAAABJRU5ErkJggg==');
+      await silentAudio.play();
+      silentAudio.pause();
+      silentAudio.currentTime = 0;
+      ttsUnlockedRef.current = true;
+    } catch {
+      // Best-effort unlock; some browsers may still block autoplay.
+    }
+  }, []);
 
   const generateTtsForCompletion = useCallback(async (text: string) => {
     if (!text || !text.trim()) return;
@@ -414,7 +445,26 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
 
       const blob = new Blob([buffer], { type: contentType });
       const url = URL.createObjectURL(blob);
+
+      setTtsCurrentTime(0);
+      setTtsDuration(0);
       setTtsAudioUrl(url);
+
+      const audio = ttsAudioRef.current;
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
+        audio.playbackRate = ttsPlaybackRate;
+        audio.src = url;
+        audio.load();
+        try {
+          await audio.play();
+          setIsTtsPlaying(true);
+          setTtsError(null);
+        } catch {
+          setTtsError('Autoplay blocked. Press play to listen.');
+        }
+      }
     } catch (error: unknown) {
       const name = (error as { name?: unknown })?.name;
       if (name === 'AbortError') return;
@@ -428,7 +478,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         ttsAbortControllerRef.current = null;
       }
     }
-  }, [cleanupTtsAudio]);
+  }, [cleanupTtsAudio, ttsPlaybackRate]);
 
   const toggleTtsPlayback = useCallback(async () => {
     if (!ttsAudioRef.current || !ttsAudioUrl) return;
@@ -440,13 +490,24 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     }
 
     try {
+      ttsAudioRef.current.playbackRate = ttsPlaybackRate;
       await ttsAudioRef.current.play();
       setIsTtsPlaying(true);
       setTtsError(null);
-    } catch (error) {
+    } catch {
       setTtsError('Playback failed. Please try again.');
     }
-  }, [isTtsPlaying, ttsAudioUrl]);
+  }, [isTtsPlaying, ttsAudioUrl, ttsPlaybackRate]);
+
+  const cycleTtsPlaybackRate = useCallback(() => {
+    const rates = [1, 1.5, 2, 2.5];
+    const idx = rates.indexOf(ttsPlaybackRate);
+    const next = rates[(idx + 1) % rates.length];
+    setTtsPlaybackRate(next);
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.playbackRate = next;
+    }
+  }, [ttsPlaybackRate]);
 
   const skipTtsBackward = useCallback(() => {
     if (!ttsAudioRef.current) return;
@@ -474,27 +535,20 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   }, [fetchBalance, fetchModelPricing, fetchPrompts, fetchRagStatus]);
 
   useEffect(() => {
+    const audio = ttsAudioRef.current;
     return () => {
       if (ttsAbortControllerRef.current) {
         ttsAbortControllerRef.current.abort();
       }
-      if (ttsAudioRef.current) {
-        ttsAudioRef.current.pause();
-      }
+      audio?.pause();
     };
   }, []);
 
-  // Auto-play TTS when audio URL becomes available
   useEffect(() => {
-    if (ttsAudioUrl && ttsAudioRef.current) {
-      const audio = ttsAudioRef.current;
-      audio.play().then(() => {
-        setIsTtsPlaying(true);
-      }).catch(() => {
-        setTtsError('Autoplay blocked. Press play to listen.');
-      });
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.playbackRate = ttsPlaybackRate;
     }
-  }, [ttsAudioUrl]);
+  }, [ttsPlaybackRate]);
 
   // Save prompts when they change (after initial load)
   useEffect(() => {
@@ -569,6 +623,8 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     editor.commands.focus();
 
     cleanupTtsAudio();
+    setLastRequestPreview(null);
+    unlockTtsAudio();
 
     const text = getTextForCompletion();
 
@@ -585,7 +641,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       const response = await fetch('/api/autocomplete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, modelId: selectedModel, prompt: customPrompt }),
+        body: JSON.stringify({ text, modelId: selectedModel, prompt: customPrompt, useRagContext }),
         signal: abortControllerRef.current.signal,
       });
 
@@ -596,6 +652,10 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
 
       if (!response.ok) {
         throw new Error(data.error || 'Failed to get completion');
+      }
+
+      if (data.requestPreview) {
+        setLastRequestPreview(data.requestPreview as AutocompleteRequestPreview);
       }
 
       if (data.completion && editor) {
@@ -659,7 +719,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       setIsAutoCompleting(false);
       abortControllerRef.current = null;
     }
-  }, [editor, isAutoCompleting, getTextForCompletion, selectedModel, customPrompt, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion]);
+  }, [editor, isAutoCompleting, getTextForCompletion, selectedModel, customPrompt, useRagContext, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio]);
 
   // Handle regeneration when Tab is pressed with no words selected
   const handleRegenerate = useCallback(async () => {
@@ -669,6 +729,8 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     editor.commands.focus();
 
     cleanupTtsAudio();
+    setLastRequestPreview(null);
+    unlockTtsAudio();
 
     // Get the current ghost text before removing it
     const currentCompletionText = completionTextRef.current.trim();
@@ -697,7 +759,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       const response = await fetch('/api/autocomplete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, modelId: selectedModel, prompt: regenPrompt }),
+        body: JSON.stringify({ text, modelId: selectedModel, prompt: regenPrompt, useRagContext }),
         signal: abortControllerRef.current.signal,
       });
 
@@ -708,6 +770,10 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
 
       if (!response.ok) {
         throw new Error(data.error || 'Failed to get completion');
+      }
+
+      if (data.requestPreview) {
+        setLastRequestPreview(data.requestPreview as AutocompleteRequestPreview);
       }
 
       if (data.completion && editor) {
@@ -770,7 +836,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       setIsAutoCompleting(false);
       abortControllerRef.current = null;
     }
-  }, [editor, isAutoCompleting, completion, attemptHistory, getTextForCompletion, buildRegenPrompt, selectedModel, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion]);
+  }, [editor, isAutoCompleting, completion, attemptHistory, getTextForCompletion, buildRegenPrompt, selectedModel, useRagContext, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio]);
 
   // Cancel ongoing generation
   const cancelGeneration = useCallback(() => {
@@ -836,6 +902,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     editor.commands.focus();
 
     cleanupTtsAudio();
+    setLastRequestPreview(null);
 
     const { from, to } = completion.range;
     
@@ -867,6 +934,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     editor.commands.focus();
 
     cleanupTtsAudio();
+    setLastRequestPreview(null);
 
     const { from, to } = completion.range;
     const selectedWords = completion.words.slice(0, completion.selectedCount);
@@ -1118,14 +1186,14 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       )}
 
       {ttsError && completion.isActive && (
-        <div className="fixed left-1/2 -translate-x-1/2 top-14 z-[69] text-[11px] md:text-xs text-amber-200 bg-zinc-900 px-2 py-1 rounded border border-amber-500/50 shadow-lg">
+        <div className="fixed left-1/2 -translate-x-1/2 z-[69] text-[11px] md:text-xs text-amber-200 bg-zinc-900 px-2 py-1 rounded border border-amber-500/50 shadow-lg max-md:bottom-20 max-md:top-auto md:top-14 md:bottom-auto">
           {ttsError}
         </div>
       )}
 
       {/* TTS Audio Control Panel */}
       {ttsAudioUrl && completion.isActive && (
-        <div className="fixed left-1/2 -translate-x-1/2 top-14 z-[69] bg-zinc-900 border border-zinc-700 rounded-lg shadow-lg px-3 py-2 flex items-center gap-3">
+        <div className="fixed left-1/2 -translate-x-1/2 z-[69] bg-zinc-900 border border-zinc-700 rounded-lg shadow-lg px-3 py-2 flex items-center gap-3 max-md:bottom-4 max-md:top-auto max-md:w-[calc(100%-1rem)] max-md:justify-center md:top-14 md:bottom-auto">
           <button
             type="button"
             onClick={skipTtsBackward}
@@ -1141,6 +1209,14 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             title={isTtsPlaying ? 'Pause' : 'Play'}
           >
             {isTtsPlaying ? <Pause size={18} /> : <Play size={18} />}
+          </button>
+          <button
+            type="button"
+            onClick={cycleTtsPlaybackRate}
+            className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors text-xs font-mono"
+            title="Playback speed"
+          >
+            {ttsPlaybackRate}x
           </button>
           <button
             type="button"
@@ -1277,6 +1353,18 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                 )}
               </>
             )}
+
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-xs text-zinc-500">Use context in prompt</span>
+              <button
+                type="button"
+                onClick={() => setUseRagContext(v => !v)}
+                className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${useRagContext ? 'bg-blue-600' : 'bg-zinc-700'}`}
+                title={useRagContext ? 'RAG context enabled' : 'RAG context disabled'}
+              >
+                <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${useRagContext ? 'translate-x-5' : 'translate-x-1'}`} />
+              </button>
+            </div>
           </div>
           
           {/* Model Selection */}
@@ -1427,6 +1515,15 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       >
         <div className="p-4 flex flex-col gap-6 w-64">
           <h2 className="text-lg font-semibold text-zinc-400 border-b border-zinc-700 pb-2">Tools</h2>
+
+          {lastRequestPreview && (
+            <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
+              <div className="text-sm text-zinc-400">Last request</div>
+              <pre className="text-[11px] leading-relaxed text-zinc-200 bg-black/30 border border-zinc-800 rounded p-2 max-h-48 overflow-auto whitespace-pre-wrap break-words">
+                {JSON.stringify(lastRequestPreview, null, 2)}
+              </pre>
+            </div>
+          )}
           
           {/* Bold Control */}
           <div className="flex items-center justify-between">
@@ -1527,19 +1624,17 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
           </div>
         )}
 
-        {ttsAudioUrl && (
-          <audio
-            ref={ttsAudioRef}
-            src={ttsAudioUrl}
-            onEnded={() => { setIsTtsPlaying(false); setTtsCurrentTime(0); }}
-            onPause={() => setIsTtsPlaying(false)}
-            onPlay={() => setIsTtsPlaying(true)}
-            onTimeUpdate={(e) => setTtsCurrentTime(e.currentTarget.currentTime)}
-            onLoadedMetadata={(e) => setTtsDuration(e.currentTarget.duration)}
-            onError={() => setTtsError('Audio playback error')}
-            className="hidden"
-          />
-        )}
+        <audio
+          ref={ttsAudioRef}
+          src={ttsAudioUrl ?? undefined}
+          onEnded={() => { setIsTtsPlaying(false); setTtsCurrentTime(0); }}
+          onPause={() => setIsTtsPlaying(false)}
+          onPlay={() => setIsTtsPlaying(true)}
+          onTimeUpdate={(e) => setTtsCurrentTime(e.currentTarget.currentTime)}
+          onLoadedMetadata={(e) => setTtsDuration(e.currentTarget.duration)}
+          onError={() => setTtsError('Audio playback error')}
+          className="hidden"
+        />
       </div>
 
       {/* Mobile Touch Controls - rendered via Portal to ensure proper z-index on iOS */}
