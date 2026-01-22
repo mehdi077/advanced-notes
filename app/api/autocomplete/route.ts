@@ -135,6 +135,8 @@ export async function POST(request: NextRequest) {
       model: (typeof modelId === 'string' && modelId) ? modelId : DEFAULT_MODEL,
       useRagContext,
       ragContext: ragContext || null,
+      promptText: userPromptText,
+      inputText: text,
       systemPrompt: systemPromptContent,
       userMessage: `${userPromptText} ${text}`,
       messages: [

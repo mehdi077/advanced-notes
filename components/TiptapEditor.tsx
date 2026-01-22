@@ -26,6 +26,9 @@ const DEFAULT_REGEN_PROMPT_TEMPLATE = `This is the already generated text:
 Now generate a drastically  different path to the completion for the next attempt, very far deferent from the ones that are shown in the attempts above.
 {{ORIGINAL_PROMPT}}`;
 
+const SILENT_WAV_DATA_URL =
+  'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==';
+
 interface CompletionState {
   isActive: boolean;
   words: string[];
@@ -51,6 +54,8 @@ interface AutocompleteRequestPreview {
   model: string;
   useRagContext: boolean;
   ragContext: string | null;
+  promptText: string;
+  inputText: string;
   systemPrompt: string;
   userMessage: string;
   messages: Array<{ role: 'system' | 'user'; content: string }>;
@@ -92,6 +97,22 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const [useRagContext, setUseRagContext] = useState(true);
   const [lastRequestPreview, setLastRequestPreview] = useState<AutocompleteRequestPreview | null>(null);
 
+  const lastSystemPromptParts = useMemo(() => {
+    if (!lastRequestPreview) return null;
+    const s = lastRequestPreview.systemPrompt;
+    const start = '---RELEVANT CONTEXT---';
+    const end = '---END CONTEXT---';
+    const startIdx = s.indexOf(start);
+    const endIdx = s.indexOf(end);
+    if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) {
+      return { before: s, context: null as string | null, after: '' };
+    }
+    const before = s.slice(0, startIdx).trimEnd();
+    const context = s.slice(startIdx + start.length, endIdx).trim();
+    const after = s.slice(endIdx + end.length).trimStart();
+    return { before, context, after };
+  }, [lastRequestPreview]);
+
   // TTS playback state for generated ghost text
   const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
   const [isTtsLoading, setIsTtsLoading] = useState(false);
@@ -103,6 +124,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
   const ttsAbortControllerRef = useRef<AbortController | null>(null);
   const ttsUnlockedRef = useRef(false);
+  const ttsAutoplayRequestedRef = useRef(false);
   
   // Saved completion popup state
   const [savedCompletionPopup, setSavedCompletionPopup] = useState<{ isOpen: boolean; content: string }>({
@@ -402,7 +424,10 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const unlockTtsAudio = useCallback(async () => {
     if (ttsUnlockedRef.current) return;
     try {
-      const silentAudio = new Audio('data:audio/wav;base64,UklGRi9AAABAAAAAAABAAEA8AEAAP///AAAABJRU5ErkJggg==');
+      const silentAudio = new Audio(SILENT_WAV_DATA_URL);
+      silentAudio.muted = true;
+      silentAudio.volume = 0;
+      silentAudio.setAttribute('playsinline', 'true');
       await silentAudio.play();
       silentAudio.pause();
       silentAudio.currentTime = 0;
@@ -448,23 +473,8 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
 
       setTtsCurrentTime(0);
       setTtsDuration(0);
+      ttsAutoplayRequestedRef.current = true;
       setTtsAudioUrl(url);
-
-      const audio = ttsAudioRef.current;
-      if (audio) {
-        audio.pause();
-        audio.currentTime = 0;
-        audio.playbackRate = ttsPlaybackRate;
-        audio.src = url;
-        audio.load();
-        try {
-          await audio.play();
-          setIsTtsPlaying(true);
-          setTtsError(null);
-        } catch {
-          setTtsError('Autoplay blocked. Press play to listen.');
-        }
-      }
     } catch (error: unknown) {
       const name = (error as { name?: unknown })?.name;
       if (name === 'AbortError') return;
@@ -478,7 +488,43 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         ttsAbortControllerRef.current = null;
       }
     }
-  }, [cleanupTtsAudio, ttsPlaybackRate]);
+  }, [cleanupTtsAudio]);
+
+  useEffect(() => {
+    const audio = ttsAudioRef.current;
+    if (!audio || !ttsAudioUrl || !completion.isActive) return;
+
+    audio.playbackRate = ttsPlaybackRate;
+    audio.currentTime = 0;
+
+    if (!ttsAutoplayRequestedRef.current) return;
+    ttsAutoplayRequestedRef.current = false;
+
+    const attemptPlay = async () => {
+      try {
+        await audio.play();
+        setIsTtsPlaying(true);
+        setTtsError(null);
+      } catch {
+        setIsTtsPlaying(false);
+        setTtsError('Autoplay blocked. Press play to listen.');
+      }
+    };
+
+    if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+      void attemptPlay();
+      return;
+    }
+
+    const onCanPlay = () => {
+      void attemptPlay();
+    };
+
+    audio.addEventListener('canplay', onCanPlay, { once: true });
+    return () => {
+      audio.removeEventListener('canplay', onCanPlay);
+    };
+  }, [ttsAudioUrl, ttsPlaybackRate, completion.isActive]);
 
   const toggleTtsPlayback = useCallback(async () => {
     if (!ttsAudioRef.current || !ttsAudioUrl) return;
@@ -1519,9 +1565,62 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
           {lastRequestPreview && (
             <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
               <div className="text-sm text-zinc-400">Last request</div>
-              <pre className="text-[11px] leading-relaxed text-zinc-200 bg-black/30 border border-zinc-800 rounded p-2 max-h-48 overflow-auto whitespace-pre-wrap break-words">
-                {JSON.stringify(lastRequestPreview, null, 2)}
-              </pre>
+
+              <div className="text-[11px] leading-relaxed text-zinc-200 bg-black/30 border border-zinc-800 rounded p-2 h-[60vh] overflow-auto whitespace-pre-wrap break-words">
+                <div className="text-zinc-400">Model: <span className="text-zinc-200 font-mono">{lastRequestPreview.model}</span></div>
+                <div className="text-zinc-400">RAG: <span className={lastRequestPreview.useRagContext ? 'text-green-300' : 'text-zinc-400'}>{lastRequestPreview.useRagContext ? 'enabled' : 'disabled'}</span></div>
+
+                {lastRequestPreview.ragContext && (
+                  <div className="mt-3">
+                    <div className="text-zinc-400 mb-1">Context</div>
+                    <pre className="text-violet-200 bg-violet-950/20 border border-violet-900/40 rounded p-2 whitespace-pre-wrap break-words">
+                      {lastRequestPreview.ragContext}
+                    </pre>
+                  </div>
+                )}
+
+                <div className="mt-3">
+                  <div className="text-zinc-400 mb-1">Personalized prompt</div>
+                  <pre className="text-emerald-200 bg-emerald-950/15 border border-emerald-900/30 rounded p-2 whitespace-pre-wrap break-words">
+                    {lastRequestPreview.promptText}
+                  </pre>
+                </div>
+
+                <div className="mt-3">
+                  <div className="text-zinc-400 mb-1">Input text (until last dot/newline)</div>
+                  <pre className="text-amber-200 bg-amber-950/15 border border-amber-900/30 rounded p-2 whitespace-pre-wrap break-words">
+                    {lastRequestPreview.inputText}
+                  </pre>
+                </div>
+
+                <div className="mt-3">
+                  <div className="text-zinc-400 mb-1">User message (as sent)</div>
+                  <div className="bg-zinc-950/30 border border-zinc-800 rounded p-2 font-mono whitespace-pre-wrap break-words">
+                    <span className="text-emerald-200">{lastRequestPreview.promptText}</span>
+                    <span className="text-zinc-200"> </span>
+                    <span className="text-amber-200">{lastRequestPreview.inputText}</span>
+                  </div>
+                </div>
+
+                <div className="mt-3">
+                  <div className="text-zinc-400 mb-1">System prompt (as sent)</div>
+                  <div className="bg-zinc-950/30 border border-zinc-800 rounded p-2 font-mono whitespace-pre-wrap break-words">
+                    <pre className="text-zinc-200 whitespace-pre-wrap break-words">
+                      {lastSystemPromptParts?.before ?? lastRequestPreview.systemPrompt}
+                    </pre>
+                    {lastSystemPromptParts?.context && (
+                      <pre className="mt-2 text-violet-200 whitespace-pre-wrap break-words">
+                        {lastSystemPromptParts.context}
+                      </pre>
+                    )}
+                    {lastSystemPromptParts?.after && (
+                      <pre className="mt-2 text-zinc-200 whitespace-pre-wrap break-words">
+                        {lastSystemPromptParts.after}
+                      </pre>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           )}
           
@@ -1604,7 +1703,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       )}
 
       {/* Editor Area */}
-      <div className={`flex-1 transition-all duration-300 relative editor-area ${isSidebarOpen ? 'md:mr-64' : ''} ${isLeftSidebarOpen ? 'md:ml-72' : ''}`}>
+      <div className="flex-1 transition-all duration-300 relative editor-area">
         <EditorContent editor={editor} />
         
         {/* Loading Indicator Overlay */}
@@ -1627,6 +1726,8 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         <audio
           ref={ttsAudioRef}
           src={ttsAudioUrl ?? undefined}
+          preload="auto"
+          playsInline
           onEnded={() => { setIsTtsPlaying(false); setTtsCurrentTime(0); }}
           onPause={() => setIsTtsPlaying(false)}
           onPlay={() => setIsTtsPlaying(true)}
