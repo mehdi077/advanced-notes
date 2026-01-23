@@ -35,6 +35,32 @@ export default function VoiceChat() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  const loadModelPrefsFromStorage = useCallback(() => {
+    if (typeof window === 'undefined') return;
+
+    const rawCustom = window.localStorage.getItem(STORAGE_CUSTOM_MODELS_KEY);
+    if (rawCustom) {
+      try {
+        const parsed: unknown = JSON.parse(rawCustom);
+        if (Array.isArray(parsed)) {
+          setCustomModelIds(parsed.filter((v): v is string => typeof v === 'string').map(s => s.trim()).filter(Boolean));
+        }
+      } catch {
+        // ignore
+      }
+    } else {
+      setCustomModelIds([]);
+    }
+
+    const rawSelected = window.localStorage.getItem(STORAGE_CHAT_SELECTED_MODEL_KEY);
+    const selected = rawSelected?.trim();
+    if (selected) setSelectedModel(selected as ModelId);
+
+    const rawEmbeddingModel = window.localStorage.getItem(STORAGE_EMBEDDING_MODEL_KEY);
+    const em = rawEmbeddingModel?.trim();
+    if (em) setEmbeddingModelId(em);
+  }, [STORAGE_CHAT_SELECTED_MODEL_KEY, STORAGE_CUSTOM_MODELS_KEY, STORAGE_EMBEDDING_MODEL_KEY]);
+
   const allModels = useMemo(() => {
     const builtInIds = new Set(AVAILABLE_MODELS.map(m => m.id));
     const custom = customModelIds
@@ -53,26 +79,14 @@ export default function VoiceChat() {
   }, [isModalOpen]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const rawCustom = window.localStorage.getItem(STORAGE_CUSTOM_MODELS_KEY);
-    if (rawCustom) {
-      try {
-        const parsed: unknown = JSON.parse(rawCustom);
-        if (Array.isArray(parsed)) {
-          setCustomModelIds(parsed.filter((v): v is string => typeof v === 'string').map(s => s.trim()).filter(Boolean));
-        }
-      } catch {
-        // ignore
-      }
-    }
-    const rawSelected = window.localStorage.getItem(STORAGE_CHAT_SELECTED_MODEL_KEY);
-    const selected = rawSelected?.trim();
-    if (selected) setSelectedModel(selected as ModelId);
+    loadModelPrefsFromStorage();
+  }, [loadModelPrefsFromStorage]);
 
-    const rawEmbeddingModel = window.localStorage.getItem(STORAGE_EMBEDDING_MODEL_KEY);
-    const em = rawEmbeddingModel?.trim();
-    if (em) setEmbeddingModelId(em);
-  }, []);
+  // Refresh custom models when opening the chat so changes made in the editor sidepanel show up.
+  useEffect(() => {
+    if (!isModalOpen) return;
+    loadModelPrefsFromStorage();
+  }, [isModalOpen, loadModelPrefsFromStorage]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
