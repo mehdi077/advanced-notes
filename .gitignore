@@ -8,3 +8,4 @@ data.db
 *.log
 reference-projs/
 # docs/
+dataBackup
