@@ -167,24 +167,24 @@ export default function VoiceChat() {
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" onClick={closeModal} />
       
       {/* Modal */}
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-2 md:p-4">
-        <div className="relative bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-800 w-full max-w-3xl max-h-[80vh] flex flex-col overflow-hidden">
+      <div className="fixed inset-0 z-50 flex items-stretch md:items-center justify-center p-0 md:p-4">
+        <div className="relative bg-zinc-900 rounded-none md:rounded-2xl shadow-2xl border border-zinc-800 w-full md:max-w-3xl h-[100dvh] md:h-auto md:max-h-[80vh] flex flex-col overflow-hidden">
           
           {/* Close button */}
           <button
             onClick={closeModal}
-            className="absolute top-3 right-3 md:top-4 md:right-4 z-10 p-2 rounded-full bg-zinc-800 hover:bg-zinc-700 transition-colors text-zinc-400 hover:text-white"
+            className="absolute top-[calc(env(safe-area-inset-top)+0.75rem)] right-3 md:top-4 md:right-4 z-10 p-2 rounded-full bg-zinc-800 hover:bg-zinc-700 transition-colors text-zinc-400 hover:text-white"
           >
             <X size={18} className="md:w-5 md:h-5" />
           </button>
 
           {/* Header */}
-          <div className="px-4 py-3 md:px-6 md:py-4 border-b border-zinc-800 flex-shrink-0">
+          <div className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 md:px-6 md:py-4 border-b border-zinc-800 flex-shrink-0">
             <h2 className="text-lg md:text-xl font-semibold text-white pr-10">Chat</h2>
 
             <div className="mt-3 flex flex-col gap-3">
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
+              <div className="flex flex-col gap-3 md:flex-row md:items-end">
+                <div className="flex-1 min-w-0">
                   <label className="block text-xs text-zinc-400 mb-1">Model</label>
                   <select
                     value={String(selectedModel)}
@@ -203,7 +203,7 @@ export default function VoiceChat() {
                   </select>
                 </div>
 
-                <div className="flex items-center gap-2 pt-5">
+                <div className="flex items-center justify-between md:justify-start gap-2">
                   <span className="text-xs text-zinc-400">RAG</span>
                   <button
                     type="button"
@@ -227,8 +227,11 @@ export default function VoiceChat() {
             </div>
           )}
 
-          <div className="flex-1 overflow-hidden flex flex-col">
-            <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 md:px-6 md:py-4 space-y-3">
+          <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+            <div
+              ref={scrollRef}
+              className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 md:px-6 md:py-4 space-y-3"
+            >
               {messages.length === 0 && (
                 <div className="text-sm text-zinc-500">Ask anything. Closing this popup clears the conversation.</div>
               )}
@@ -259,7 +262,7 @@ export default function VoiceChat() {
               )}
             </div>
 
-            <div className="border-t border-zinc-800 p-3 md:p-4">
+            <div className="border-t border-zinc-800 px-3 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] md:p-4">
               <div className="flex gap-2">
                 <input
                   ref={inputRef}

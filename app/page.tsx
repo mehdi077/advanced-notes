@@ -95,7 +95,7 @@ export default function Home() {
       {/* Floating Voice Button - positioned above editor content */}
       <button
         onClick={() => setIsModalOpen(true)}
-        className="fixed bottom-6 right-6 md:bottom-8 md:right-8 w-14 h-14 md:w-16 md:h-16 rounded-full bg-purple-600 hover:bg-purple-700 shadow-lg transition-colors z-[35] flex items-center justify-center"
+        className="fixed bottom-[calc(env(safe-area-inset-bottom)+1.5rem)] right-6 md:bottom-8 md:right-8 w-14 h-14 md:w-16 md:h-16 rounded-full bg-purple-600 hover:bg-purple-700 shadow-lg transition-colors z-[35] flex items-center justify-center"
         title="Open Chat"
       >
         <MessageSquare size={24} className="text-white" />
