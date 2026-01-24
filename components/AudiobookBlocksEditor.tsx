@@ -90,6 +90,15 @@ export default function AudiobookBlocksEditor({
     });
   };
 
+  const saveDocNow = () => {
+    // Ensure deletes are persisted immediately.
+    try {
+      saveDocDebounced.flush();
+    } catch {
+      // ignore
+    }
+  };
+
   const addBlockAfter = (afterId?: string) => {
     const newBlock: AudiobookBlock = { id: makeId(), text: '' };
     updateDoc((prev) => {
@@ -103,22 +112,42 @@ export default function AudiobookBlocksEditor({
 
   const deleteBlock = async (blockId: string) => {
     const block = doc.blocks.find((b) => b.id === blockId);
-    const segId = block?.audioSegmentId;
+    if (!block) return;
+    const segId = block.audioSegmentId;
 
-    updateDoc((prev) => ({ ...prev, blocks: prev.blocks.filter((b) => b.id !== blockId) }));
-    setBlockError((prev) => {
-      const next = { ...prev };
-      delete next[blockId];
-      return next;
-    });
+    if (busyBlockId) return;
 
-    // Best-effort cleanup of audio.
-    if (segId) {
-      try {
-        await fetch(`/api/audiobooks/segments/${segId}`, { method: 'DELETE' });
-      } catch {
-        // ignore
+    setBusyBlockId(blockId);
+    setBlockError((p) => ({ ...p, [blockId]: null }));
+
+    try {
+      // If this block has audio, delete it from server/db first.
+      if (segId) {
+        const res = await fetch(`/api/audiobooks/segments/${segId}`, { method: 'DELETE' });
+        const data = (await res.json()) as { success?: boolean; error?: string };
+        if (!res.ok) throw new Error(data.error || 'Failed to delete audio');
       }
+
+      updateDoc((prev) => {
+        const remaining = prev.blocks.filter((b) => b.id !== blockId);
+        return {
+          ...prev,
+          blocks: remaining.length ? remaining : [{ id: makeId(), text: '' }],
+        };
+      });
+      setBlockError((prev) => {
+        const next = { ...prev };
+        delete next[blockId];
+        return next;
+      });
+      saveDocNow();
+    } catch (e: unknown) {
+      const msg =
+        (typeof (e as { message?: unknown })?.message === 'string' && (e as { message: string }).message) ||
+        'Failed to delete block';
+      setBlockError((p) => ({ ...p, [blockId]: msg }));
+    } finally {
+      setBusyBlockId(null);
     }
   };
 
@@ -234,6 +263,7 @@ export default function AudiobookBlocksEditor({
                   <button
                     type="button"
                     onClick={() => addBlockAfter(b.id)}
+                    disabled={isBusy}
                     className="rounded border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-900"
                   >
                     + Below
@@ -241,7 +271,8 @@ export default function AudiobookBlocksEditor({
                   <button
                     type="button"
                     onClick={() => void deleteBlock(b.id)}
-                    className="rounded border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-900"
+                    disabled={isBusy}
+                    className="rounded border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-900 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Delete
                   </button>

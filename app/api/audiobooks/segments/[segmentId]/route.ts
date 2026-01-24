@@ -7,9 +7,9 @@ function isSafeId(id: string) {
   return /^[a-zA-Z0-9-]+$/.test(id);
 }
 
-export async function DELETE(_req: NextRequest, ctx: { params: { segmentId: string } }) {
+export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ segmentId: string }> }) {
   try {
-    const { segmentId } = ctx.params;
+    const { segmentId } = await ctx.params;
     if (!segmentId || !isSafeId(segmentId)) {
       return NextResponse.json({ error: 'Invalid segmentId' }, { status: 400 });
     }

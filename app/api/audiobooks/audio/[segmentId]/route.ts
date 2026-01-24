@@ -7,8 +7,8 @@ function isSafeId(id: string) {
   return /^[a-zA-Z0-9-]+$/.test(id);
 }
 
-export async function GET(_req: NextRequest, ctx: { params: { segmentId: string } }) {
-  const { segmentId } = ctx.params;
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ segmentId: string }> }) {
+  const { segmentId } = await ctx.params;
   if (!segmentId || !isSafeId(segmentId)) {
     return NextResponse.json({ error: 'Invalid segmentId' }, { status: 400 });
   }
