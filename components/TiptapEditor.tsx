@@ -803,9 +803,8 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const getTextForCompletion = useCallback(() => {
     if (!editor) return '';
 
-    const fullText = editor.getText();
     const cursorPos = editor.state.selection.anchor;
-    let textUpToCursor = fullText.slice(0, cursorPos);
+    let textUpToCursor = editor.state.doc.textBetween(0, cursorPos, '\n', '\n');
 
     // Trim trailing spaces to treat "word " same as "word"
     textUpToCursor = textUpToCursor.trimEnd();
@@ -1633,6 +1632,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               <span className="text-xs text-zinc-500">Use context in prompt</span>
               <button
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => setUseRagContext(v => !v)}
                 className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${useRagContext ? 'bg-blue-600' : 'bg-zinc-700'}`}
                 title={useRagContext ? 'RAG context enabled' : 'RAG context disabled'}

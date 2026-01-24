@@ -7,5 +7,5 @@ next-env.d.ts
 data.db
 *.log
 reference-projs/
-# docs/
+docs/
 dataBackup

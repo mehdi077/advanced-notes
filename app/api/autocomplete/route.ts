@@ -109,7 +109,8 @@ export async function POST(request: NextRequest) {
     const systemPrompt = new SystemMessage(systemPromptContent);
 
     const userPromptText = typeof prompt === 'string' && prompt.trim() ? prompt : 'Provide a two sentence long completion to this text:';
-    const userPrompt = new HumanMessage(`${userPromptText} ${text}`);
+    const userMessage = `${userPromptText}\n\n${text}`;
+    const userPrompt = new HumanMessage(userMessage);
 
     const messages = [systemPrompt, userPrompt];
 
@@ -126,7 +127,7 @@ export async function POST(request: NextRequest) {
     console.log('==============================\n');
     console.log('---SYSTEM PROMPT START---\n' + systemPromptContent + '\n---SYSTEM PROMPT END---');
     console.log('==============================\n');
-    console.log('---USER MESSAGE START---\n' + `${userPromptText} ${text}` + '\n---USER MESSAGE END---');
+    console.log('---USER MESSAGE START---\n' + userMessage + '\n---USER MESSAGE END---');
     console.log('==============================\n');
 
     const response = await model.invoke(messages);
@@ -150,10 +151,10 @@ export async function POST(request: NextRequest) {
       promptText: userPromptText,
       inputText: text,
       systemPrompt: systemPromptContent,
-      userMessage: `${userPromptText} ${text}`,
+      userMessage,
       messages: [
         { role: 'system' as const, content: systemPromptContent },
-        { role: 'user' as const, content: `${userPromptText} ${text}` },
+        { role: 'user' as const, content: userMessage },
       ],
     };
 
