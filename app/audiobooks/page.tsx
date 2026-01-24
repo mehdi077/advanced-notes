@@ -1,8 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { debounce } from 'lodash';
-import AudiobookEditor from '@/components/AudiobookEditor';
+import { useEffect, useState } from 'react';
+import AudiobookBlocksEditor from '@/components/AudiobookBlocksEditor';
 import Link from 'next/link';
 import { ChevronLeft } from 'lucide-react';
 
@@ -27,24 +26,6 @@ export default function AudiobooksPage() {
     }
     loadDoc();
   }, []);
-
-  const saveContent = useMemo(() => {
-    return debounce(async (newContent: object) => {
-      try {
-        await fetch('/api/audiobooks/doc', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: DOC_ID, content: newContent }),
-        });
-      } catch (e) {
-        console.error('Failed to save audiobook doc', e);
-      }
-    }, 800);
-  }, []);
-
-  useEffect(() => {
-    return () => saveContent.cancel();
-  }, [saveContent]);
 
   if (isLoading) {
     return (
@@ -71,11 +52,7 @@ export default function AudiobooksPage() {
           <p className="mt-2 text-sm text-zinc-500">Paste/write text, generate per-section audio, and replay it later.</p>
         </div>
 
-        <AudiobookEditor
-          docId={DOC_ID}
-          initialContent={content}
-          onContentUpdate={(c) => saveContent(c)}
-        />
+        <AudiobookBlocksEditor docId={DOC_ID} initialDoc={content} />
       </div>
     </main>
   );
