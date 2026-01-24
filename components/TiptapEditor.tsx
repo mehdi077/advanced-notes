@@ -112,7 +112,18 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const [embeddingModelError, setEmbeddingModelError] = useState<string | null>(null);
 
   const [useRagContext, setUseRagContext] = useState(true);
+  const useRagContextRef = useRef(true);
   const [lastRequestPreview, setLastRequestPreview] = useState<AutocompleteRequestPreview | null>(null);
+
+  useEffect(() => {
+    useRagContextRef.current = useRagContext;
+  }, [useRagContext]);
+
+  const toggleUseRagContext = useCallback(() => {
+    const next = !useRagContextRef.current;
+    useRagContextRef.current = next;
+    setUseRagContext(next);
+  }, []);
 
   const lastSystemPromptParts = useMemo(() => {
     if (!lastRequestPreview) return null;
@@ -872,7 +883,13 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       const response = await fetch('/api/autocomplete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, modelId: selectedModel, prompt: customPrompt, useRagContext, embeddingModelId }),
+        body: JSON.stringify({
+          text,
+          modelId: selectedModel,
+          prompt: customPrompt,
+          useRagContext: useRagContextRef.current,
+          embeddingModelId,
+        }),
         signal: abortControllerRef.current.signal,
       });
 
@@ -952,7 +969,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       setIsAutoCompleting(false);
       abortControllerRef.current = null;
     }
-  }, [editor, isAutoCompleting, getTextForCompletion, selectedModel, customPrompt, useRagContext, embeddingModelId, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio, autoGenerateTts]);
+  }, [editor, isAutoCompleting, getTextForCompletion, selectedModel, customPrompt, embeddingModelId, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio, autoGenerateTts]);
 
   // Handle regeneration when Tab is pressed with no words selected
   const handleRegenerate = useCallback(async () => {
@@ -992,7 +1009,13 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       const response = await fetch('/api/autocomplete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, modelId: selectedModel, prompt: regenPrompt, useRagContext, embeddingModelId }),
+        body: JSON.stringify({
+          text,
+          modelId: selectedModel,
+          prompt: regenPrompt,
+          useRagContext: useRagContextRef.current,
+          embeddingModelId,
+        }),
         signal: abortControllerRef.current.signal,
       });
 
@@ -1071,7 +1094,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       setIsAutoCompleting(false);
       abortControllerRef.current = null;
     }
-  }, [editor, isAutoCompleting, completion, attemptHistory, getTextForCompletion, buildRegenPrompt, selectedModel, useRagContext, embeddingModelId, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio, autoGenerateTts]);
+  }, [editor, isAutoCompleting, completion, attemptHistory, getTextForCompletion, buildRegenPrompt, selectedModel, embeddingModelId, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio, autoGenerateTts]);
 
   // Cancel ongoing generation
   const cancelGeneration = useCallback(() => {
@@ -1633,7 +1656,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               <button
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => setUseRagContext(v => !v)}
+                  onClick={toggleUseRagContext}
                 className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${useRagContext ? 'bg-blue-600' : 'bg-zinc-700'}`}
                 title={useRagContext ? 'RAG context enabled' : 'RAG context disabled'}
               >
@@ -1829,19 +1852,49 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               <div className="text-sm text-zinc-400">Last request</div>
 
               <div className="text-[11px] leading-relaxed text-zinc-200 bg-black/30 border border-zinc-800 rounded p-2 h-[60vh] overflow-auto whitespace-pre-wrap break-words">
-                <div className="text-zinc-400">Model: <span className="text-zinc-200 font-mono">{lastRequestPreview.model}</span></div>
-                <div className="text-zinc-400">RAG: <span className={lastRequestPreview.useRagContext ? 'text-green-300' : 'text-zinc-400'}>{lastRequestPreview.useRagContext ? 'enabled' : 'disabled'}</span></div>
+                {lastRequestPreview.useRagContext && (
+                  <>
+                    <div className="text-zinc-400">Model: <span className="text-zinc-200 font-mono">{lastRequestPreview.model}</span></div>
+                    <div className="text-zinc-400">RAG: <span className="text-green-300">enabled</span></div>
 
-                {lastRequestPreview.ragContext && (
-                  <div className="mt-3">
-                    <div className="text-zinc-400 mb-1">Context</div>
-                    <pre className="text-violet-200 bg-violet-950/20 border border-violet-900/40 rounded p-2 whitespace-pre-wrap break-words">
-                      {lastRequestPreview.ragContext}
-                    </pre>
-                  </div>
+                    {lastRequestPreview.ragContext && (
+                      <div className="mt-3">
+                        <div className="text-zinc-400 mb-1">Context</div>
+                        <pre className="text-violet-200 bg-violet-950/20 border border-violet-900/40 rounded p-2 whitespace-pre-wrap break-words">
+                          {lastRequestPreview.ragContext}
+                        </pre>
+                      </div>
+                    )}
+
+                    <div className="mt-3">
+                      <div className="text-zinc-400 mb-1">User message (as sent)</div>
+                      <div className="bg-zinc-950/30 border border-zinc-800 rounded p-2 font-mono whitespace-pre-wrap break-words">
+                        {lastRequestPreview.userMessage}
+                      </div>
+                    </div>
+
+                    <div className="mt-3">
+                      <div className="text-zinc-400 mb-1">System prompt (as sent)</div>
+                      <div className="bg-zinc-950/30 border border-zinc-800 rounded p-2 font-mono whitespace-pre-wrap break-words">
+                        <pre className="text-zinc-200 whitespace-pre-wrap break-words">
+                          {lastSystemPromptParts?.before ?? lastRequestPreview.systemPrompt}
+                        </pre>
+                        {lastSystemPromptParts?.context && (
+                          <pre className="mt-2 text-violet-200 whitespace-pre-wrap break-words">
+                            {lastSystemPromptParts.context}
+                          </pre>
+                        )}
+                        {lastSystemPromptParts?.after && (
+                          <pre className="mt-2 text-zinc-200 whitespace-pre-wrap break-words">
+                            {lastSystemPromptParts.after}
+                          </pre>
+                        )}
+                      </div>
+                    </div>
+                  </>
                 )}
 
-                <div className="mt-3">
+                <div className={lastRequestPreview.useRagContext ? 'mt-3' : ''}>
                   <div className="text-zinc-400 mb-1">Personalized prompt</div>
                   <pre className="text-emerald-200 bg-emerald-950/15 border border-emerald-900/30 rounded p-2 whitespace-pre-wrap break-words">
                     {lastRequestPreview.promptText}
@@ -1853,34 +1906,6 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                   <pre className="text-amber-200 bg-amber-950/15 border border-amber-900/30 rounded p-2 whitespace-pre-wrap break-words">
                     {lastRequestPreview.inputText}
                   </pre>
-                </div>
-
-                <div className="mt-3">
-                  <div className="text-zinc-400 mb-1">User message (as sent)</div>
-                  <div className="bg-zinc-950/30 border border-zinc-800 rounded p-2 font-mono whitespace-pre-wrap break-words">
-                    <span className="text-emerald-200">{lastRequestPreview.promptText}</span>
-                    <span className="text-zinc-200"> </span>
-                    <span className="text-amber-200">{lastRequestPreview.inputText}</span>
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <div className="text-zinc-400 mb-1">System prompt (as sent)</div>
-                  <div className="bg-zinc-950/30 border border-zinc-800 rounded p-2 font-mono whitespace-pre-wrap break-words">
-                    <pre className="text-zinc-200 whitespace-pre-wrap break-words">
-                      {lastSystemPromptParts?.before ?? lastRequestPreview.systemPrompt}
-                    </pre>
-                    {lastSystemPromptParts?.context && (
-                      <pre className="mt-2 text-violet-200 whitespace-pre-wrap break-words">
-                        {lastSystemPromptParts.context}
-                      </pre>
-                    )}
-                    {lastSystemPromptParts?.after && (
-                      <pre className="mt-2 text-zinc-200 whitespace-pre-wrap break-words">
-                        {lastSystemPromptParts.after}
-                      </pre>
-                    )}
-                  </div>
                 </div>
               </div>
             </div>
