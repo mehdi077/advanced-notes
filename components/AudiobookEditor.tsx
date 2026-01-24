@@ -68,6 +68,7 @@ export default function AudiobookEditor({ docId, initialContent, onContentUpdate
   const canGenerate = Boolean(lastSelectionRef.current?.text);
 
   const editor = useEditor({
+    immediatelyRender: false,
     extensions: [StarterKit, AudioSegmentMark, AudioClip],
     content: initialContent || '<p></p>',
     editorProps: {

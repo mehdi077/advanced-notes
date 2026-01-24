@@ -8,11 +8,12 @@ import { Highlight } from '@tiptap/extension-highlight';
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { debounce } from 'lodash';
-import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, MessageSquare, Play, Pause, SkipBack, SkipForward, Database, Plus } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, MessageSquare, Play, Pause, SkipBack, SkipForward, Database, Plus, BookOpen } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
 import { CompletionMark } from '@/lib/completion-mark';
 import { SavedCompletion } from '@/lib/saved-completion';
+import Link from 'next/link';
 
 interface TiptapEditorProps {
   initialContent: object | null;
@@ -1541,6 +1542,18 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             <Sparkles size={18} className="inline mr-2" />
             AI Assistant
           </h2>
+
+          {/* Navigation */}
+          <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
+            <span className="text-sm text-zinc-400">Navigate</span>
+            <Link
+              href="/audiobooks"
+              className="flex items-center justify-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 rounded text-white font-medium transition-colors cursor-pointer"
+            >
+              <BookOpen size={18} />
+              Audiobooks
+            </Link>
+          </div>
           
           {/* Balance Display */}
           <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
