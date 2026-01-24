@@ -98,6 +98,8 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   // Balance and pricing state
   const [balanceInfo, setBalanceInfo] = useState<BalanceInfo | null>(null);
   const [isLoadingBalance, setIsLoadingBalance] = useState(false);
+  const [groqBalanceInfo, setGroqBalanceInfo] = useState<BalanceInfo | null>(null);
+  const [isLoadingGroqBalance, setIsLoadingGroqBalance] = useState(false);
   const [modelPricing, setModelPricing] = useState<ModelPricingMap>({});
   const [lastGenerationCost, setLastGenerationCost] = useState<number | null>(null);
   const [promptsLoaded, setPromptsLoaded] = useState(false);
@@ -441,6 +443,21 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     }
   }, []);
 
+  const fetchGroqBalance = useCallback(async () => {
+    setIsLoadingGroqBalance(true);
+    try {
+      const response = await fetch('/api/groq-balance');
+      if (response.ok) {
+        const data = await response.json();
+        setGroqBalanceInfo(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch Groq balance:', error);
+    } finally {
+      setIsLoadingGroqBalance(false);
+    }
+  }, []);
+
   // Fetch model pricing from OpenRouter
   const fetchModelPricing = useCallback(async () => {
     try {
@@ -753,10 +770,11 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   // Fetch balance, pricing, and prompts on mount
   useEffect(() => {
     fetchBalance();
+    fetchGroqBalance();
     fetchModelPricing();
     fetchPrompts();
     fetchRagStatus();
-  }, [fetchBalance, fetchModelPricing, fetchPrompts, fetchRagStatus]);
+  }, [fetchBalance, fetchGroqBalance, fetchModelPricing, fetchPrompts, fetchRagStatus]);
 
   // Load selected embedding model from localStorage
   useEffect(() => {
@@ -1543,6 +1561,31 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             </div>
             <div className="text-xl font-mono text-green-400">
               {balanceInfo ? `$${balanceInfo.balance.toFixed(4)}` : '---'}
+            </div>
+          </div>
+
+          {/* Groq Balance Display */}
+          <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-zinc-400 flex items-center gap-2">
+                <DollarSign size={16} />
+                Groq
+              </span>
+              <button
+                type="button"
+                onClick={fetchGroqBalance}
+                disabled={isLoadingGroqBalance}
+                className="p-1 hover:bg-zinc-700 rounded transition-colors cursor-pointer disabled:opacity-50"
+                title="Refresh Groq balance"
+              >
+                <RefreshCw size={14} className={isLoadingGroqBalance ? 'animate-spin' : ''} />
+              </button>
+            </div>
+            <div className="text-xl font-mono text-green-400">
+              {groqBalanceInfo ? `$${groqBalanceInfo.balance.toFixed(4)}` : '---'}
+            </div>
+            <div className="text-[11px] text-zinc-500">
+              Owed: {groqBalanceInfo ? `$${groqBalanceInfo.totalUsage.toFixed(4)}` : '---'} • Credits: {groqBalanceInfo ? `$${groqBalanceInfo.totalCredits.toFixed(4)}` : '---'}
             </div>
           </div>
 
