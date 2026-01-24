@@ -5,7 +5,9 @@ tsconfig.tsbuildinfo
 next-env.d.ts
 .DS_Store
 data.db
+audiobook.db
 *.log
 reference-projs/
 # docs/
 dataBackup
+data/
