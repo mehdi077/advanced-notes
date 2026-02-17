@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getOpenRouterModel, DEFAULT_MODEL, ModelId } from '@/lib/model-config';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import db from '@/lib/db';
+import { getRagTopK } from '@/lib/rag-settings';
 
 const DEFAULT_EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
-const TOP_K = 3;
 
 async function getEmbedding(text: string, embeddingModelId: string): Promise<number[]> {
   const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
@@ -59,7 +59,8 @@ async function getRAGContextWithStats(
     });
 
     similarities.sort((a, b) => b.score - a.score);
-    const relevant = similarities.slice(0, TOP_K).filter(c => c.score > 0.3);
+    const topK = getRagTopK();
+    const relevant = similarities.slice(0, topK).filter(c => c.score > 0.3);
     return { context: relevant.map(c => c.text).join('\n\n'), chunksRetrieved: relevant.length, chunksAvailable };
   } catch (error) {
     console.error('RAG error:', error);

@@ -120,6 +120,11 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const useRagContextRef = useRef(true);
   const [lastRequestPreview, setLastRequestPreview] = useState<AutocompleteRequestPreview | null>(null);
 
+  const [ragTopK, setRagTopK] = useState<number>(3);
+  const [ragTopKDraft, setRagTopKDraft] = useState<string>('3');
+  const [ragTopKLoaded, setRagTopKLoaded] = useState(false);
+  const [ragTopKDirty, setRagTopKDirty] = useState(false);
+
   useEffect(() => {
     useRagContextRef.current = useRagContext;
   }, [useRagContext]);
@@ -128,6 +133,15 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     const next = !useRagContextRef.current;
     useRagContextRef.current = next;
     setUseRagContext(next);
+
+    // Persist in data.db
+    void fetch('/api/editor-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ useRagContext: next }),
+    }).catch(() => {
+      // ignore
+    });
   }, []);
 
   const lastSystemPromptParts = useMemo(() => {
@@ -494,6 +508,25 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     }
   }, []);
 
+  const fetchEditorSettings = useCallback(async () => {
+    try {
+      const response = await fetch('/api/editor-settings');
+      if (!response.ok) return;
+      const data = (await response.json()) as { useRagContext?: unknown; completionAudio?: unknown };
+
+      if (typeof data.useRagContext === 'boolean') {
+        useRagContextRef.current = data.useRagContext;
+        setUseRagContext(data.useRagContext);
+      }
+
+      if (typeof data.completionAudio === 'boolean') {
+        setAutoGenerateTts(data.completionAudio);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const savePrompts = useMemo(() => {
     return debounce(async (prompt: string, regenTemplate: string) => {
       try {
@@ -508,11 +541,64 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     }, 1000);
   }, []);
 
+  const fetchRagTopK = useCallback(async () => {
+    try {
+      const response = await fetch('/api/rag-topk');
+      if (!response.ok) return;
+      const data = (await response.json()) as { topK?: unknown };
+      const raw = data?.topK;
+      const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number.parseInt(raw, 10) : NaN;
+      if (Number.isFinite(n) && n >= 1) {
+        const v = Math.min(50, Math.max(1, Math.trunc(n)));
+        setRagTopK(v);
+        setRagTopKDraft(String(v));
+      } else {
+        setRagTopK(3);
+        setRagTopKDraft('3');
+      }
+    } catch {
+      // ignore
+    } finally {
+      setRagTopKLoaded(true);
+    }
+  }, []);
+
+  const saveRagTopK = useMemo(() => {
+    return debounce(async (topK: number) => {
+      try {
+        const response = await fetch('/api/rag-topk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topK }),
+        });
+        if (!response.ok) return;
+        const data = (await response.json().catch(() => ({}))) as { topK?: unknown };
+        const raw = data?.topK;
+        const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number.parseInt(raw, 10) : NaN;
+        if (Number.isFinite(n) && n >= 1) {
+          const v = Math.min(50, Math.max(1, Math.trunc(n)));
+          setRagTopK(v);
+          setRagTopKDraft(String(v));
+          setRagTopKDirty(false);
+        }
+      } catch {
+        // ignore
+      }
+    }, 600);
+  }, []);
+
   useEffect(() => {
     return () => {
       savePrompts.cancel();
+      saveRagTopK.cancel();
     };
-  }, [savePrompts]);
+  }, [savePrompts, saveRagTopK]);
+
+  useEffect(() => {
+    if (ragTopKLoaded && ragTopKDirty) {
+      saveRagTopK(ragTopK);
+    }
+  }, [ragTopK, ragTopKLoaded, ragTopKDirty, saveRagTopK]);
 
   // Fetch RAG embedding status
   const fetchRagStatus = useCallback(async (modelOverride?: string) => {
@@ -618,6 +704,24 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     setIsTtsPlaying(false);
     setTtsError(null);
   }, [ttsAudioUrl]);
+
+  const toggleCompletionAudio = useCallback(() => {
+    setAutoGenerateTts((v) => {
+      const next = !v;
+      if (!next) cleanupTtsAudio();
+
+      // Persist in data.db
+      void fetch('/api/editor-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ completionAudio: next }),
+      }).catch(() => {
+        // ignore
+      });
+
+      return next;
+    });
+  }, [cleanupTtsAudio]);
 
   const unlockTtsAudio = useCallback(async () => {
     if (ttsUnlockedRef.current) return;
@@ -776,8 +880,10 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     fetchGroqBalance();
     fetchModelPricing();
     fetchPrompts();
+    fetchEditorSettings();
     fetchRagStatus();
-  }, [fetchBalance, fetchGroqBalance, fetchModelPricing, fetchPrompts, fetchRagStatus]);
+    fetchRagTopK();
+  }, [fetchBalance, fetchGroqBalance, fetchModelPricing, fetchPrompts, fetchEditorSettings, fetchRagStatus, fetchRagTopK]);
 
   // Load selected embedding model from localStorage
   useEffect(() => {
@@ -1709,17 +1815,58 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               </>
             )}
 
-            <div className="mt-2 flex items-center justify-between">
-              <span className="text-xs text-zinc-500">Use context in prompt</span>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
+            <div className="mt-3 border-t border-zinc-700/60 pt-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-zinc-500">Use context in prompt</span>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={toggleUseRagContext}
-                className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${useRagContext ? 'bg-blue-600' : 'bg-zinc-700'}`}
-                title={useRagContext ? 'RAG context enabled' : 'RAG context disabled'}
-              >
-                <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${useRagContext ? 'translate-x-5' : 'translate-x-1'}`} />
-              </button>
+                  className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${useRagContext ? 'bg-blue-600' : 'bg-zinc-700'}`}
+                  title={useRagContext ? 'RAG context enabled' : 'RAG context disabled'}
+                >
+                  <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${useRagContext ? 'translate-x-5' : 'translate-x-1'}`} />
+                </button>
+              </div>
+
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-xs text-zinc-500">Completion audio</span>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={toggleCompletionAudio}
+                  className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${autoGenerateTts ? 'bg-blue-600' : 'bg-zinc-700'}`}
+                  title={autoGenerateTts ? 'Auto-generate audio enabled' : 'Auto-generate audio disabled'}
+                >
+                  <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${autoGenerateTts ? 'translate-x-5' : 'translate-x-1'}`} />
+                </button>
+              </div>
+              <div className="text-[11px] text-zinc-500 mt-1">When enabled, audio is generated automatically after each completion.</div>
+
+              <div className="mt-3">
+                <div className="text-xs text-zinc-500 mb-1">Chunks to retrieve (Top K)</div>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={ragTopKDraft}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setRagTopKDraft(v);
+                    setRagTopKDirty(true);
+                    const n = Number.parseInt(v, 10);
+                    if (Number.isFinite(n)) {
+                      setRagTopK(Math.min(50, Math.max(1, Math.trunc(n))));
+                    }
+                  }}
+                  onBlur={() => {
+                    setRagTopKDraft(String(ragTopK));
+                  }}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-zinc-500 font-mono"
+                  placeholder="3"
+                />
+                <div className="text-[11px] text-zinc-500 mt-1">Stored in <span className="font-mono">data.db</span> (defaults to 3 if unset)</div>
+              </div>
             </div>
           </div>
           
@@ -1858,29 +2005,6 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             </div>
           </div>
 
-          {/* TTS Settings */}
-          <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-zinc-400">Completion audio</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setAutoGenerateTts(v => {
-                    const next = !v;
-                    if (!next) cleanupTtsAudio();
-                    return next;
-                  });
-                }}
-                className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${autoGenerateTts ? 'bg-blue-600' : 'bg-zinc-700'}`}
-                title={autoGenerateTts ? 'Auto-generate audio enabled' : 'Auto-generate audio disabled'}
-              >
-                <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${autoGenerateTts ? 'translate-x-5' : 'translate-x-1'}`} />
-              </button>
-            </div>
-            <div className="text-xs text-zinc-500">
-              When enabled, audio is generated automatically after each completion.
-            </div>
-          </div>
         </div>
       </div>
 

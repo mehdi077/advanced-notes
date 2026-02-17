@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { getOpenRouterModel, DEFAULT_MODEL, ModelId } from '@/lib/model-config';
 import db from '@/lib/db';
+import { getRagTopK } from '@/lib/rag-settings';
 
 const DEFAULT_EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
-const TOP_K = 3;
 
 type ChatRole = 'user' | 'assistant';
 interface ChatMessageDTO {
@@ -64,7 +64,8 @@ async function getRAGContext(query: string, embeddingModelId: string): Promise<s
     });
 
     similarities.sort((a, b) => b.score - a.score);
-    const relevant = similarities.slice(0, TOP_K).filter((c) => c.score > 0.3);
+    const topK = getRagTopK();
+    const relevant = similarities.slice(0, topK).filter((c) => c.score > 0.3);
     return relevant.map((c) => c.text).join('\n\n');
   } catch (error) {
     console.error('RAG error:', error);

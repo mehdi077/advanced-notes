@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import db from '@/lib/db';
+import { getRagTopK } from '@/lib/rag-settings';
 
 const DEFAULT_EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
-const TOP_K = 3; // Number of relevant chunks to retrieve
 
 async function getEmbedding(text: string, embeddingModelId: string): Promise<number[]> {
   const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
@@ -87,7 +87,8 @@ export async function POST(request: NextRequest) {
 
     // Sort by similarity and get top K
     similarities.sort((a, b) => b.score - a.score);
-    const topChunks = similarities.slice(0, TOP_K);
+    const topK = getRagTopK();
+    const topChunks = similarities.slice(0, topK);
 
     // Filter out low similarity chunks
     const relevantChunks = topChunks.filter(c => c.score > 0.3);
