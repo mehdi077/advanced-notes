@@ -38,10 +38,10 @@ function cosineSimilarity(a: number[], b: number[]): number {
 async function getRAGContextWithStats(
   query: string,
   embeddingModelId: string
-): Promise<{ context: string; chunksRetrieved: number }> {
+): Promise<{ context: string; chunksRetrieved: number; chunksAvailable: number }> {
   try {
     const queryEmbedding = await getEmbedding(query, embeddingModelId);
-    if (queryEmbedding.length === 0) return { context: '', chunksRetrieved: 0 };
+    if (queryEmbedding.length === 0) return { context: '', chunksRetrieved: 0, chunksAvailable: 0 };
 
     const rows = db
       .prepare('SELECT chunk_text, embedding FROM embeddings WHERE embedding_model_id = ?')
@@ -49,7 +49,9 @@ async function getRAGContextWithStats(
       chunk_text: string;
       embedding: Buffer;
     }[];
-    if (rows.length === 0) return { context: '', chunksRetrieved: 0 };
+    if (rows.length === 0) return { context: '', chunksRetrieved: 0, chunksAvailable: 0 };
+
+    const chunksAvailable = rows.length;
 
     const similarities = rows.map(row => {
       const embedding = Array.from(new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.length / 4));
@@ -58,10 +60,10 @@ async function getRAGContextWithStats(
 
     similarities.sort((a, b) => b.score - a.score);
     const relevant = similarities.slice(0, TOP_K).filter(c => c.score > 0.3);
-    return { context: relevant.map(c => c.text).join('\n\n'), chunksRetrieved: relevant.length };
+    return { context: relevant.map(c => c.text).join('\n\n'), chunksRetrieved: relevant.length, chunksAvailable };
   } catch (error) {
     console.error('RAG error:', error);
-    return { context: '', chunksRetrieved: 0 };
+    return { context: '', chunksRetrieved: 0, chunksAvailable: 0 };
   }
 }
 
@@ -99,9 +101,10 @@ export async function POST(request: NextRequest) {
     // Get RAG context (optional)
     const rag = useRagContext
       ? await getRAGContextWithStats(text, embeddingModelId)
-      : { context: '', chunksRetrieved: 0 };
+      : { context: '', chunksRetrieved: 0, chunksAvailable: 0 };
     const ragContext = rag.context;
     const ragChunksRetrieved = rag.chunksRetrieved;
+    const ragChunksAvailable = rag.chunksAvailable;
 
     let systemPromptContent = 'You are a writing assistant. Your task is to continue the user\'s text naturally. ' +
       'Respond with ONLY the completion text, nothing else. ' +
@@ -156,6 +159,7 @@ export async function POST(request: NextRequest) {
       embeddingModelId,
       ragContext: ragContext || null,
       ragChunksRetrieved,
+      ragChunksAvailable,
       promptText: userPromptText,
       inputText: text,
       systemPrompt: systemPromptContent,

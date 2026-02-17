@@ -63,6 +63,7 @@ interface AutocompleteRequestPreview {
   embeddingModelId?: string;
   ragContext: string | null;
   ragChunksRetrieved?: number;
+  ragChunksAvailable?: number;
   promptText: string;
   inputText: string;
   systemPrompt: string;
@@ -1913,6 +1914,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                   <>
                     <div className="text-zinc-400">Model: <span className="text-zinc-200 font-mono">{lastRequestPreview.model}</span></div>
                     <div className="text-zinc-400">RAG: <span className="text-green-300">enabled</span></div>
+                    <div className="text-zinc-400">Chunks available: <span className="text-zinc-200 font-mono">{lastRequestPreview.ragChunksAvailable ?? 0}</span></div>
                     <div className="text-zinc-400">Chunks retrieved: <span className="text-zinc-200 font-mono">{lastRequestPreview.ragChunksRetrieved ?? 0}</span></div>
 
                     {lastRequestPreview.ragContext && (
