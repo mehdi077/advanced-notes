@@ -30,15 +30,16 @@ export const SavedCompletion = Node.create<SavedCompletionOptions>({
   addAttributes() {
     return {
       content: {
-        default: null,
+        default: '',
         parseHTML: element => {
           const data = element.getAttribute('data-content');
-          return data ? decodeURIComponent(data) : null;
+          if (data === null) return '';
+          return decodeURIComponent(data);
         },
         renderHTML: attributes => {
-          if (!attributes.content) return {};
+          if (attributes.content === null || attributes.content === undefined) return {};
           return {
-            'data-content': encodeURIComponent(attributes.content),
+            'data-content': encodeURIComponent(String(attributes.content)),
           };
         },
       },

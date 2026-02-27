@@ -8,11 +8,12 @@ import { Highlight } from '@tiptap/extension-highlight';
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { debounce } from 'lodash';
-import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, MessageSquare, Play, Pause, SkipBack, SkipForward, Database, Plus, BookOpen } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, MessageSquare, Play, Pause, SkipBack, SkipForward, Database, Plus, Minus, BookOpen } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
 import { CompletionMark } from '@/lib/completion-mark';
 import { SavedCompletion } from '@/lib/saved-completion';
+import { FontSize } from '@/lib/font-size';
 import Link from 'next/link';
 
 interface TiptapEditorProps {
@@ -175,8 +176,9 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const ttsAutoplayRequestedRef = useRef(false);
   
   // Saved completion popup state
-  const [savedCompletionPopup, setSavedCompletionPopup] = useState<{ isOpen: boolean; content: string }>({
+  const [savedCompletionPopup, setSavedCompletionPopup] = useState<{ isOpen: boolean; pos: number | null; content: string }>({
     isOpen: false,
+    pos: null,
     content: ''
   });
   
@@ -397,6 +399,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     extensions: [
       StarterKit,
       TextStyle,
+      FontSize,
       Color,
       Highlight.configure({
         multicolor: true,
@@ -1492,17 +1495,32 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   useEffect(() => {
     const handleSavedCompletionClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      const marker = target.closest('[data-saved-completion]');
-      if (marker) {
-        e.preventDefault();
-        const content = marker.getAttribute('data-content');
-        if (content) {
-          setSavedCompletionPopup({
-            isOpen: true,
-            content: decodeURIComponent(content)
-          });
+      const marker = target.closest('[data-saved-completion]') as HTMLElement | null;
+      if (!marker || !editor) return;
+
+      e.preventDefault();
+
+      let pos = editor.view.posAtDOM(marker, 0);
+      let node = editor.state.doc.nodeAt(pos);
+
+      if (!node || node.type.name !== 'savedCompletion') {
+        const altPos = Math.max(0, pos - 1);
+        const altNode = editor.state.doc.nodeAt(altPos);
+        if (altNode && altNode.type.name === 'savedCompletion') {
+          pos = altPos;
+          node = altNode;
         }
       }
+
+      if (!node || node.type.name !== 'savedCompletion') return;
+
+      const content = typeof node.attrs?.content === 'string' ? node.attrs.content : '';
+
+      setSavedCompletionPopup({
+        isOpen: true,
+        pos,
+        content,
+      });
     };
 
     if (editor) {
@@ -1525,6 +1543,59 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
   const toggleLeftSidebar = () => setIsLeftSidebarOpen(!isLeftSidebarOpen);
+
+  const getCurrentFontSizePx = () => {
+    const attrs = editor.getAttributes('textStyle') as { fontSize?: unknown };
+    const raw = attrs?.fontSize;
+    if (typeof raw === 'string') {
+      const m = raw.trim().match(/^([0-9]+(?:\.[0-9]+)?)px$/);
+      if (m) return Number.parseFloat(m[1]);
+    }
+    return 16;
+  };
+
+  const adjustFontSize = (deltaPx: number) => {
+    const current = getCurrentFontSizePx();
+    const next = Math.min(72, Math.max(10, Math.round(current + deltaPx)));
+    editor.chain().focus().setFontSize(`${next}px`).run();
+  };
+
+  const insertStarBlock = () => {
+    editor.commands.focus();
+    editor.commands.insertSavedCompletion('');
+  };
+
+  const closeSavedCompletionPopup = () => {
+    const pos = savedCompletionPopup.pos;
+    const content = savedCompletionPopup.content;
+
+    if (typeof pos === 'number') {
+      const doc = editor.state.doc;
+      let node = doc.nodeAt(pos);
+      let nodePos = pos;
+
+      if (!node || node.type.name !== 'savedCompletion') {
+        const altPos = Math.max(0, pos - 1);
+        const altNode = doc.nodeAt(altPos);
+        if (altNode && altNode.type.name === 'savedCompletion') {
+          node = altNode;
+          nodePos = altPos;
+        }
+      }
+
+      if (node && node.type.name === 'savedCompletion') {
+        editor.view.dispatch(
+          editor.state.tr.setNodeMarkup(nodePos, undefined, {
+            ...node.attrs,
+            content,
+          })
+        );
+      }
+    }
+
+    setSavedCompletionPopup({ isOpen: false, pos: null, content: '' });
+    editor.commands.focus();
+  };
 
   return (
     <div className={`flex w-full min-h-screen bg-black text-white relative ${completion.isActive ? 'completion-active' : ''} ${isAutoCompleting ? 'generating' : ''}`}>
@@ -2029,6 +2100,15 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         <div className="p-4 flex flex-col gap-6 w-64">
           <h2 className="text-lg font-semibold text-zinc-400 border-b border-zinc-700 pb-2">Tools</h2>
 
+          <button
+            type="button"
+            onClick={insertStarBlock}
+            className="flex items-center justify-center px-4 py-3 bg-zinc-800 hover:bg-zinc-700 rounded text-white font-medium transition-colors cursor-pointer"
+            title="Insert ★"
+          >
+            ★
+          </button>
+
           {lastRequestPreview && (
             <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
               <div className="text-sm text-zinc-400">Last request</div>
@@ -2105,6 +2185,30 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             >
               <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${editor.isActive('bold') ? 'translate-x-5' : 'translate-x-1'}`} />
             </button>
+          </div>
+
+          {/* Font Size Control */}
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-2 text-sm"><span className="text-zinc-300 font-semibold">A</span> Size</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => adjustFontSize(-2)}
+                className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                title="Decrease text size"
+              >
+                <Minus size={16} />
+              </button>
+              <span className="w-12 text-center text-xs font-mono text-zinc-400 select-none">{getCurrentFontSizePx()}px</span>
+              <button
+                type="button"
+                onClick={() => adjustFontSize(2)}
+                className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                title="Increase text size"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
           </div>
 
           {/* Color Control */}
@@ -2369,19 +2473,35 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
 
           {/* Main FAB - Generate completion */}
           {!completion.isActive && !isAutoCompleting && (
-            <button
-              type="button"
-              tabIndex={-1}
-              onMouseDown={(e) => e.preventDefault()}
-              onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
-              onTouchEnd={(e) => { e.preventDefault(); handleAutoComplete(); }}
-              onClick={handleAutoComplete}
-              className="p-4 rounded-full bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-lg hover:shadow-blue-500/25 hover:scale-105 active:scale-95 select-none pointer-events-auto"
-              style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
-              title="Generate AI completion"
-            >
-              <Split size={24} />
-            </button>
+            <div className="flex flex-col items-end gap-3 pointer-events-none">
+              <button
+                type="button"
+                tabIndex={-1}
+                onMouseDown={(e) => e.preventDefault()}
+                onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onTouchEnd={(e) => { e.preventDefault(); insertStarBlock(); }}
+                onClick={insertStarBlock}
+                className="p-3 rounded-full bg-zinc-900/95 backdrop-blur-sm text-amber-400 hover:text-amber-300 hover:bg-zinc-800 transition-all shadow-lg border border-zinc-700/50 select-none pointer-events-auto"
+                style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
+                title="Insert ★"
+              >
+                <Star size={20} />
+              </button>
+
+              <button
+                type="button"
+                tabIndex={-1}
+                onMouseDown={(e) => e.preventDefault()}
+                onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onTouchEnd={(e) => { e.preventDefault(); handleAutoComplete(); }}
+                onClick={handleAutoComplete}
+                className="p-4 rounded-full bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-lg hover:shadow-blue-500/25 hover:scale-105 active:scale-95 select-none pointer-events-auto"
+                style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
+                title="Generate AI completion"
+              >
+                <Split size={24} />
+              </button>
+            </div>
           )}
         </div>,
         document.body
@@ -2401,19 +2521,25 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               </h3>
               <button
                 type="button"
-                onClick={() => setSavedCompletionPopup({ isOpen: false, content: '' })}
+                onClick={closeSavedCompletionPopup}
                 className="p-1 rounded hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white"
               >
                 <X size={20} />
               </button>
             </div>
             <div className="p-4 overflow-y-auto max-h-[60vh]">
-              <p className="text-zinc-300 whitespace-pre-wrap">{savedCompletionPopup.content}</p>
+              <textarea
+                value={savedCompletionPopup.content}
+                onChange={(e) => setSavedCompletionPopup((prev) => ({ ...prev, content: e.target.value }))}
+                className="w-full min-h-[220px] bg-zinc-950/40 border border-zinc-700 rounded p-3 text-sm text-zinc-200 focus:outline-none focus:border-zinc-500 resize-y"
+                placeholder=""
+                spellCheck={false}
+              />
             </div>
             <div className="p-4 border-t border-zinc-700 flex justify-end">
               <button
                 type="button"
-                onClick={() => setSavedCompletionPopup({ isOpen: false, content: '' })}
+                onClick={closeSavedCompletionPopup}
                 className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded transition-colors"
               >
                 Close
