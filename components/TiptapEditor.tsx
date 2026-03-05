@@ -8,7 +8,7 @@ import { Highlight } from '@tiptap/extension-highlight';
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { debounce } from 'lodash';
-import { ChevronRight, ChevronLeft, Bold, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, MessageSquare, Play, Pause, SkipBack, SkipForward, Database, Plus, Minus, BookOpen } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Bold, Strikethrough, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, MessageSquare, Play, Pause, SkipBack, SkipForward, Database, Plus, Minus, BookOpen } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
 import { CompletionMark } from '@/lib/completion-mark';
@@ -2209,6 +2209,19 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                 <Plus size={16} />
               </button>
             </div>
+          </div>
+
+          {/* Strikethrough Control */}
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-2 text-sm"><Strikethrough size={16} /> Strike</span>
+            <button
+              type="button"
+              onClick={() => editor.chain().focus().toggleStrike().run()}
+              className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${editor.isActive('strike') ? 'bg-blue-600' : 'bg-zinc-700'}`}
+              title="Toggle strikethrough"
+            >
+              <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${editor.isActive('strike') ? 'translate-x-5' : 'translate-x-1'}`} />
+            </button>
           </div>
 
           {/* Color Control */}
