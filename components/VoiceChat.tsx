@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { X, Send } from 'lucide-react';
 import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
+import { authFetch } from '@/lib/auth-fetch';
 
 export default function VoiceChat() {
   const { isModalOpen, setIsModalOpen } = useVoiceStore();
@@ -97,7 +98,7 @@ export default function VoiceChat() {
     // Fetch OpenRouter pricing (best-effort)
     const fetchPricing = async () => {
       try {
-        const res = await fetch('/api/models');
+        const res = await authFetch('/api/models');
         if (!res.ok) return;
         const data = (await res.json()) as { models?: Array<{ id: string; pricing: ModelPricing }> };
         const map: ModelPricingMap = {};
@@ -138,7 +139,7 @@ export default function VoiceChat() {
     setInput('');
 
     try {
-      const res = await fetch('/api/chat', {
+      const res = await authFetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -6,6 +6,7 @@ import TiptapEditor from '../components/TiptapEditor';
 import VoiceChat from '../components/VoiceChat';
 import { ArrowDown, MessageSquare } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
+import { authFetch } from '@/lib/auth-fetch';
 
 export default function Home() {
   const [content, setContent] = useState<object | null>(null);
@@ -17,7 +18,7 @@ export default function Home() {
     // Load from API on mount
     async function loadDoc() {
       try {
-        const res = await fetch(`/api/doc?id=${DOC_ID}`);
+        const res = await authFetch(`/api/doc?id=${DOC_ID}`);
         if (res.ok) {
           const data = await res.json();
           if (data) {
@@ -37,7 +38,7 @@ export default function Home() {
   const saveContent = useMemo(() => {
     return debounce(async (newContent: object) => {
       try {
-        await fetch('/api/doc', {
+        await authFetch('/api/doc', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: DOC_ID, content: newContent }),

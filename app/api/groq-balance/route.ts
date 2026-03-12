@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireUnlocked } from '@/lib/unlock-server';
 
 type CreditsResponse = {
   data?: {
@@ -15,7 +16,10 @@ function pickNumber(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   try {
     const apiKey = process.env.GROQ_API_KEY;
 

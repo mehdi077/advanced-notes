@@ -2,12 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import { readFile } from 'fs/promises';
 import audiobookDb from '@/lib/audiobook-db';
+import { requireUnlocked } from '@/lib/unlock-server';
 
 function isSafeId(id: string) {
   return /^[a-zA-Z0-9-]+$/.test(id);
 }
 
-export async function GET(_req: NextRequest, ctx: { params: Promise<{ segmentId: string }> }) {
+export async function GET(req: NextRequest, ctx: { params: Promise<{ segmentId: string }> }) {
+  const locked = requireUnlocked(req);
+  if (locked) return locked;
+
   const { segmentId } = await ctx.params;
   if (!segmentId || !isSafeId(segmentId)) {
     return NextResponse.json({ error: 'Invalid segmentId' }, { status: 400 });
@@ -28,7 +32,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ segmentId:
       headers: {
         'Content-Type': row.mime_type || 'audio/wav',
         'Content-Length': buf.byteLength.toString(),
-        'Cache-Control': 'public, max-age=31536000, immutable',
+        'Cache-Control': 'no-store',
       },
     });
   } catch {

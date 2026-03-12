@@ -4,6 +4,7 @@ import path from 'path';
 import { mkdir, writeFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import audiobookDb from '@/lib/audiobook-db';
+import { requireUnlocked } from '@/lib/unlock-server';
 
 type GroqTtsResponse = {
   arrayBuffer: () => Promise<ArrayBuffer>;
@@ -24,6 +25,9 @@ const DEFAULT_TTS_MODEL = 'canopylabs/orpheus-v1-english';
 const DEFAULT_TTS_VOICE = 'daniel';
 
 export async function POST(req: NextRequest) {
+  const locked = requireUnlocked(req);
+  if (locked) return locked;
+
   try {
     if (!process.env.GROQ_API_KEY) {
       return NextResponse.json({ error: 'GROQ_API_KEY is not configured' }, { status: 500 });

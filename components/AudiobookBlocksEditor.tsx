@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { debounce } from 'lodash';
+import { authFetch } from '@/lib/auth-fetch';
 
 type AudiobookBlock = {
   id: string;
@@ -65,7 +66,7 @@ export default function AudiobookBlocksEditor({
   const saveDocDebounced = useMemo(() => {
     return debounce(async (next: AudiobookDoc) => {
       try {
-        await fetch('/api/audiobooks/doc', {
+        await authFetch('/api/audiobooks/doc', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: docId, content: next }),
@@ -123,7 +124,7 @@ export default function AudiobookBlocksEditor({
     try {
       // If this block has audio, delete it from server/db first.
       if (segId) {
-        const res = await fetch(`/api/audiobooks/segments/${segId}`, { method: 'DELETE' });
+        const res = await authFetch(`/api/audiobooks/segments/${segId}`, { method: 'DELETE' });
         const data = (await res.json()) as { success?: boolean; error?: string };
         if (!res.ok) throw new Error(data.error || 'Failed to delete audio');
       }
@@ -166,7 +167,7 @@ export default function AudiobookBlocksEditor({
     setBusyBlockId(blockId);
     setBlockError((p) => ({ ...p, [blockId]: null }));
     try {
-      const res = await fetch(`/api/audiobooks/segments/${segId}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/audiobooks/segments/${segId}`, { method: 'DELETE' });
       const data = (await res.json()) as { success?: boolean; error?: string };
       if (!res.ok) throw new Error(data.error || 'Failed to delete audio');
 
@@ -200,13 +201,13 @@ export default function AudiobookBlocksEditor({
       // If regenerating, delete previous audio first (best-effort).
       if (block.audioSegmentId) {
         try {
-          await fetch(`/api/audiobooks/segments/${block.audioSegmentId}`, { method: 'DELETE' });
+          await authFetch(`/api/audiobooks/segments/${block.audioSegmentId}`, { method: 'DELETE' });
         } catch {
           // ignore
         }
       }
 
-      const res = await fetch('/api/audiobooks/segments', {
+      const res = await authFetch('/api/audiobooks/segments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ docId, text }),

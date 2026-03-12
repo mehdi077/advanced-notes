@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import db from '@/lib/db';
 import { getRagTopK } from '@/lib/rag-settings';
+import { requireUnlocked } from '@/lib/unlock-server';
 
 const DEFAULT_EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
 
@@ -40,6 +41,9 @@ function cosineSimilarity(a: number[], b: number[]): number {
 
 // POST - Retrieve relevant context
 export async function POST(request: NextRequest) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   try {
     if (!process.env.OPENROUTER_API_KEY) {
       return NextResponse.json({ error: 'OPENROUTER_API_KEY not set' }, { status: 500 });

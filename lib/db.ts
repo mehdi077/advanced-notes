@@ -25,6 +25,16 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS pin_attempt_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    success INTEGER NOT NULL,
+    ip TEXT,
+    user_agent TEXT
+  )
+`);
+
 // Embeddings table for RAG system
 // Embeddings table for RAG system (supports multiple embedding models)
 // NOTE: We migrate older schema (single-model) to this schema on startup.

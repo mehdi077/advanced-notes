@@ -7,6 +7,7 @@ import { debounce } from 'lodash';
 import { AudioSegmentMark } from '@/lib/audio-segment-mark';
 import { AudioClip } from '@/lib/audio-clip';
 import type { Editor } from '@tiptap/core';
+import { authFetch } from '@/lib/auth-fetch';
 
 interface AudiobookEditorProps {
   docId: string;
@@ -146,7 +147,7 @@ export default function AudiobookEditor({ docId, initialContent, onContentUpdate
     setError(null);
     setIsGenerating(true);
     try {
-      const res = await fetch('/api/audiobooks/segments', {
+      const res = await authFetch('/api/audiobooks/segments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ docId, text }),
@@ -178,7 +179,7 @@ export default function AudiobookEditor({ docId, initialContent, onContentUpdate
     if (!editor) return;
 
     try {
-      const res = await fetch(`/api/audiobooks/segments/${segmentId}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/audiobooks/segments/${segmentId}`, { method: 'DELETE' });
       const data = (await res.json()) as { success?: boolean; error?: string };
       if (!res.ok) throw new Error(data.error || 'Failed to delete');
 

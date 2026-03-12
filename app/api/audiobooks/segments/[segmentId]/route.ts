@@ -2,12 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import { unlink } from 'fs/promises';
 import audiobookDb from '@/lib/audiobook-db';
+import { requireUnlocked } from '@/lib/unlock-server';
 
 function isSafeId(id: string) {
   return /^[a-zA-Z0-9-]+$/.test(id);
 }
 
-export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ segmentId: string }> }) {
+export async function DELETE(req: NextRequest, ctx: { params: Promise<{ segmentId: string }> }) {
+  const locked = requireUnlocked(req);
+  if (locked) return locked;
+
   try {
     const { segmentId } = await ctx.params;
     if (!segmentId || !isSafeId(segmentId)) {

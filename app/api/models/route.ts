@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireUnlocked } from '@/lib/unlock-server';
 
 export interface ModelPricing {
   prompt: number;  // Cost per 1M tokens
@@ -11,7 +12,10 @@ export interface OpenRouterModel {
   pricing: ModelPricing;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   try {
     const apiKey = process.env.OPENROUTER_API_KEY;
     

@@ -15,6 +15,9 @@ import { CompletionMark } from '@/lib/completion-mark';
 import { SavedCompletion } from '@/lib/saved-completion';
 import { FontSize } from '@/lib/font-size';
 import Link from 'next/link';
+import { authFetch } from '@/lib/auth-fetch';
+import PinAttemptLog from '@/components/PinAttemptLog';
+import PinResetForm from '@/components/PinResetForm';
 
 interface TiptapEditorProps {
   initialContent: object | null;
@@ -136,7 +139,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     setUseRagContext(next);
 
     // Persist in data.db
-    void fetch('/api/editor-settings', {
+    void authFetch('/api/editor-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ useRagContext: next }),
@@ -451,7 +454,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const fetchBalance = useCallback(async () => {
     setIsLoadingBalance(true);
     try {
-      const response = await fetch('/api/balance');
+      const response = await authFetch('/api/balance');
       if (response.ok) {
         const data = await response.json();
         setBalanceInfo(data);
@@ -466,7 +469,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const fetchGroqBalance = useCallback(async () => {
     setIsLoadingGroqBalance(true);
     try {
-      const response = await fetch('/api/groq-balance');
+      const response = await authFetch('/api/groq-balance');
       if (response.ok) {
         const data = await response.json();
         setGroqBalanceInfo(data);
@@ -481,7 +484,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   // Fetch model pricing from OpenRouter
   const fetchModelPricing = useCallback(async () => {
     try {
-      const response = await fetch('/api/models');
+      const response = await authFetch('/api/models');
       if (response.ok) {
         const data = await response.json();
         const pricingMap: ModelPricingMap = {};
@@ -498,7 +501,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   // Fetch prompts from database
   const fetchPrompts = useCallback(async () => {
     try {
-      const response = await fetch('/api/prompts');
+      const response = await authFetch('/api/prompts');
       if (response.ok) {
         const data = await response.json();
         setCustomPrompt(data.customPrompt);
@@ -513,7 +516,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
 
   const fetchEditorSettings = useCallback(async () => {
     try {
-      const response = await fetch('/api/editor-settings');
+      const response = await authFetch('/api/editor-settings');
       if (!response.ok) return;
       const data = (await response.json()) as { useRagContext?: unknown; completionAudio?: unknown };
 
@@ -533,7 +536,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const savePrompts = useMemo(() => {
     return debounce(async (prompt: string, regenTemplate: string) => {
       try {
-        await fetch('/api/prompts', {
+        await authFetch('/api/prompts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ customPrompt: prompt, regenPromptTemplate: regenTemplate }),
@@ -546,7 +549,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
 
   const fetchRagTopK = useCallback(async () => {
     try {
-      const response = await fetch('/api/rag-topk');
+      const response = await authFetch('/api/rag-topk');
       if (!response.ok) return;
       const data = (await response.json()) as { topK?: unknown };
       const raw = data?.topK;
@@ -569,7 +572,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const saveRagTopK = useMemo(() => {
     return debounce(async (topK: number) => {
       try {
-        const response = await fetch('/api/rag-topk', {
+        const response = await authFetch('/api/rag-topk', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ topK }),
@@ -607,7 +610,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const fetchRagStatus = useCallback(async (modelOverride?: string) => {
     const modelId = modelOverride || embeddingModelId;
     try {
-      const response = await fetch(`/api/embeddings?modelId=${encodeURIComponent(modelId)}`);
+      const response = await authFetch(`/api/embeddings?modelId=${encodeURIComponent(modelId)}`);
       if (response.ok) {
         const data = await response.json();
         setRagStatus(data as { embeddingModelId: string; availableEmbeddingModels: string[]; percentage: number; totalChunks: number; embeddedChunks: number; needsUpdate: boolean });
@@ -622,7 +625,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     setIsEmbedding(true);
     setEmbeddingError(null);
     try {
-      const response = await fetch(`/api/embeddings?modelId=${encodeURIComponent(embeddingModelId)}`, { method: 'POST' });
+      const response = await authFetch(`/api/embeddings?modelId=${encodeURIComponent(embeddingModelId)}`, { method: 'POST' });
       if (response.ok) {
         await fetchRagStatus(embeddingModelId);
       } else {
@@ -644,7 +647,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     }
     setEmbeddingModelError(null);
     try {
-      const response = await fetch('/api/embeddings', {
+      const response = await authFetch('/api/embeddings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ modelId: id }),
@@ -673,7 +676,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     if (!ok) return;
     setEmbeddingError(null);
     try {
-      const response = await fetch(`/api/embeddings?modelId=${encodeURIComponent(embeddingModelId)}`, { method: 'DELETE' });
+      const response = await authFetch(`/api/embeddings?modelId=${encodeURIComponent(embeddingModelId)}`, { method: 'DELETE' });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error((data as { error?: string }).error || 'Failed to delete embeddings');
@@ -714,7 +717,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       if (!next) cleanupTtsAudio();
 
       // Persist in data.db
-      void fetch('/api/editor-settings', {
+      void authFetch('/api/editor-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ completionAudio: next }),
@@ -754,7 +757,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     ttsAbortControllerRef.current = controller;
 
     try {
-      const response = await fetch('/api/generation-tts', {
+      const response = await authFetch('/api/generation-tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
@@ -1010,7 +1013,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     abortControllerRef.current = new AbortController();
 
     try {
-      const response = await fetch('/api/autocomplete', {
+      const response = await authFetch('/api/autocomplete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1136,7 +1139,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       const text = getTextForCompletion();
       const regenPrompt = buildRegenPrompt(newAttempts);
 
-      const response = await fetch('/api/autocomplete', {
+      const response = await authFetch('/api/autocomplete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1940,6 +1943,8 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               </div>
             </div>
           </div>
+
+          <PinResetForm />
           
           {/* Model Selection */}
           <div className="flex flex-col gap-2">
@@ -2097,8 +2102,9 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
           isSidebarOpen ? 'w-64' : 'w-0'
         } overflow-hidden`}
       >
-        <div className="p-4 flex flex-col gap-6 w-64">
-          <h2 className="text-lg font-semibold text-zinc-400 border-b border-zinc-700 pb-2">Tools</h2>
+        <div className="p-4 w-64 h-full flex flex-col">
+          <div className="flex-1 overflow-auto pr-1 flex flex-col gap-6">
+            <h2 className="text-lg font-semibold text-zinc-400 border-b border-zinc-700 pb-2">Tools</h2>
 
           <button
             type="button"
@@ -2264,6 +2270,9 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               ))}
             </div>
           </div>
+          </div>
+
+          <PinAttemptLog />
         </div>
       </div>
 

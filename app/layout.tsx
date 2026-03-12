@@ -18,6 +18,7 @@ export const metadata: Metadata = {
 };
 
 import Providers from "./providers";
+import LockGate from "@/components/LockGate";
 
 export default function RootLayout({
   children,
@@ -29,7 +30,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <Providers>{children}</Providers>
+        <Providers>
+          <LockGate>{children}</LockGate>
+        </Providers>
       </body>
     </html>
   );

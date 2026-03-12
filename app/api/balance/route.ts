@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
+import { requireUnlocked } from '@/lib/unlock-server';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   try {
     const apiKey = process.env.OPENROUTER_API_KEY;
     

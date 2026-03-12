@@ -5,8 +5,12 @@ import {
   setEditorCompletionAudio,
   setEditorUseRagContext,
 } from '@/lib/editor-settings';
+import { requireUnlocked } from '@/lib/unlock-server';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   try {
     return NextResponse.json({
       useRagContext: getEditorUseRagContext(),
@@ -19,6 +23,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   try {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 

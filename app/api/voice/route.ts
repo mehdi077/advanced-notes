@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 import { ChatGroq } from '@langchain/groq';
 import { HumanMessage, AIMessage, SystemMessage, BaseMessage } from '@langchain/core/messages';
+import { requireUnlocked } from '@/lib/unlock-server';
 
 type GroqTtsResponse = {
     arrayBuffer: () => Promise<ArrayBuffer>;
@@ -25,6 +26,9 @@ export async function POST(req: NextRequest) {
     const startTime = Date.now();
     
     try {
+        const locked = requireUnlocked(req);
+        if (locked) return locked;
+
         // Debug: Log all environment variables starting with GROQ
         console.log('🔍 Environment check:', {
             hasGroqKey: !!process.env.GROQ_API_KEY,

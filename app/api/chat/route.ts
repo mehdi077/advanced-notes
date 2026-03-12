@@ -3,6 +3,7 @@ import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from '@langchain/
 import { getOpenRouterModel, DEFAULT_MODEL, ModelId } from '@/lib/model-config';
 import db from '@/lib/db';
 import { getRagTopK } from '@/lib/rag-settings';
+import { requireUnlocked } from '@/lib/unlock-server';
 
 const DEFAULT_EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
 
@@ -74,6 +75,9 @@ async function getRAGContext(query: string, embeddingModelId: string): Promise<s
 }
 
 export async function POST(request: NextRequest) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   try {
     if (!process.env.OPENROUTER_API_KEY) {
       return NextResponse.json(

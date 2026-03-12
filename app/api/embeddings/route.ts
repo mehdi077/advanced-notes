@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import db from '@/lib/db';
 import crypto from 'crypto';
+import { requireUnlocked } from '@/lib/unlock-server';
 
 const DEFAULT_EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
 const CHUNK_SIZE = 500; // characters per chunk
@@ -116,6 +117,9 @@ function listEmbeddingModels(): string[] {
 
 // GET - Get embedding status
 export async function GET(request: NextRequest) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   try {
     const { searchParams } = new URL(request.url);
     const docId = searchParams.get('id');
@@ -174,6 +178,9 @@ export async function GET(request: NextRequest) {
 
 // PUT - Register a new embedding model (no embedding yet)
 export async function PUT(request: NextRequest) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   try {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const modelIdRaw = body.modelId;
@@ -207,6 +214,9 @@ export async function PUT(request: NextRequest) {
 
 // POST - Embed new chunks
 export async function POST(request: NextRequest) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   try {
     if (!process.env.OPENROUTER_API_KEY) {
       return NextResponse.json({ error: 'OPENROUTER_API_KEY not set' }, { status: 500 });
@@ -282,6 +292,9 @@ export async function POST(request: NextRequest) {
 
 // DELETE - Delete embeddings for a model (keeps the model registered)
 export async function DELETE(request: NextRequest) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   try {
     const { searchParams } = new URL(request.url);
     const modelIdParam = searchParams.get('modelId');

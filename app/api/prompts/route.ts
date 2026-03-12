@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import db from '@/lib/db';
+import { requireUnlocked } from '@/lib/unlock-server';
 
 const DEFAULT_PROMPT = 'Provide a two sentence long completion to this text:';
 const DEFAULT_REGEN_PROMPT_TEMPLATE = `This is the already generated text:
@@ -8,7 +9,10 @@ const DEFAULT_REGEN_PROMPT_TEMPLATE = `This is the already generated text:
 Now generate a drastically  different path to the completion for the next attempt, very far deferent from the ones that are shown in the attempts above.
 {{ORIGINAL_PROMPT}}`;
 
-export async function GET() {
+export async function GET(request: Request) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   try {
     const promptRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('customPrompt') as { value: string } | undefined;
     const regenRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('regenPromptTemplate') as { value: string } | undefined;
@@ -24,6 +28,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   try {
     const body = await request.json();
     const { customPrompt, regenPromptTemplate } = body;

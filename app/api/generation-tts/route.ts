@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
+import { requireUnlocked } from '@/lib/unlock-server';
 
 type GroqTtsResponse = {
   arrayBuffer: () => Promise<ArrayBuffer>;
@@ -17,6 +18,9 @@ type GroqAudioSpeech = {
 };
 
 export async function POST(req: NextRequest) {
+  const locked = requireUnlocked(req);
+  if (locked) return locked;
+
   try {
     if (!process.env.GROQ_API_KEY) {
       return NextResponse.json(

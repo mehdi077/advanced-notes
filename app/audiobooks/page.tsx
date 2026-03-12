@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import AudiobookBlocksEditor from '@/components/AudiobookBlocksEditor';
 import Link from 'next/link';
 import { ChevronLeft } from 'lucide-react';
+import { authFetch } from '@/lib/auth-fetch';
 
 export default function AudiobooksPage() {
   const DOC_ID = 'audiobook-doc-v1';
@@ -13,7 +14,7 @@ export default function AudiobooksPage() {
   useEffect(() => {
     async function loadDoc() {
       try {
-        const res = await fetch(`/api/audiobooks/doc?id=${DOC_ID}`);
+        const res = await authFetch(`/api/audiobooks/doc?id=${DOC_ID}`);
         if (res.ok) {
           const data = await res.json();
           if (data) setContent(data);

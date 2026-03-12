@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import audiobookDb from '@/lib/audiobook-db';
+import { requireUnlocked } from '@/lib/unlock-server';
 
 export async function GET(request: Request) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id');
 
@@ -23,6 +27,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const locked = requireUnlocked(request);
+  if (locked) return locked;
+
   try {
     const body = await request.json();
     const { id, content } = body as { id?: unknown; content?: unknown };

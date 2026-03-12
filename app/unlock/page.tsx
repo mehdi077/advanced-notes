@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useUnlockStore } from '@/lib/stores/unlock-store';
 
 type UnlockStatus = { configured: boolean };
 
@@ -12,6 +13,7 @@ function isDigitKey(key: string): boolean {
 export default function UnlockPage() {
   const searchParams = useSearchParams();
   const nextPath = searchParams.get('next') || '/';
+  const setUnlockToken = useUnlockStore(s => s.setUnlockToken);
 
   const [status, setStatus] = useState<UnlockStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -100,9 +102,9 @@ export default function UnlockPage() {
         body: JSON.stringify({ pin: finalPin, confirmPin: finalConfirmPin }),
       });
 
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      const data = (await res.json().catch(() => ({}))) as { error?: string; token?: string };
 
-      if (!res.ok) {
+      if (!res.ok || !data.token) {
         setError(data.error || 'Failed to unlock');
         setPin('');
         setConfirmPin('');
@@ -110,6 +112,7 @@ export default function UnlockPage() {
         return;
       }
 
+      setUnlockToken(data.token);
       window.location.href = nextPath;
     } catch {
       setError('Failed to unlock');
@@ -119,7 +122,7 @@ export default function UnlockPage() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [nextPath]);
+  }, [nextPath, setUnlockToken]);
 
   useEffect(() => {
     if (configured) {
