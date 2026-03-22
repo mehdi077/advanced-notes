@@ -7,12 +7,20 @@ import VoiceChat from '../components/VoiceChat';
 import { ArrowDown, MessageSquare } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { authFetch } from '@/lib/auth-fetch';
+import SaveSyncIndicator from '@/components/SaveSyncIndicator';
+import { useSaveSyncStore } from '@/lib/stores/save-sync-store';
+import { extractLastWordFromTiptapJSON } from '@/lib/tiptap-text';
+
+const DOC_ID = 'infinite-doc-v1';
 
 export default function Home() {
   const [content, setContent] = useState<object | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const DOC_ID = 'infinite-doc-v1';
   const { setIsModalOpen } = useVoiceStore();
+
+  useEffect(() => {
+    useSaveSyncStore.getState().setDocId(DOC_ID);
+  }, []);
 
   useEffect(() => {
     // Load from API on mount
@@ -23,10 +31,22 @@ export default function Home() {
           const data = await res.json();
           if (data) {
             setContent(data);
+            useSaveSyncStore.getState().hydrateFromServer({
+              lastSavedWord: extractLastWordFromTiptapJSON(data),
+            });
           }
+        } else {
+          const msg = await res.text().catch(() => '');
+          useSaveSyncStore.getState().setError({
+            message: msg || res.statusText || 'Failed to load document',
+            status: res.status,
+          });
         }
       } catch (e) {
         console.error('Failed to load doc', e);
+        useSaveSyncStore.getState().setError({
+          message: e instanceof Error ? e.message : String(e),
+        });
       } finally {
         setIsLoading(false);
       }
@@ -37,18 +57,35 @@ export default function Home() {
   // Debounced save function
   const saveContent = useMemo(() => {
     return debounce(async (newContent: object) => {
+      const editSeq = useSaveSyncStore.getState().editSeq;
+      useSaveSyncStore.getState().saveStarted();
       try {
-        await authFetch('/api/doc', {
+        const res = await authFetch('/api/doc', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: DOC_ID, content: newContent }),
         });
-        console.log('Saved to server');
+        if (!res.ok) {
+          const msg = await res.text().catch(() => '');
+          useSaveSyncStore.getState().saveFailed({
+            message: msg || res.statusText || 'Save failed',
+            status: res.status,
+          });
+          return;
+        }
+
+        useSaveSyncStore.getState().saveSucceeded({
+          editSeq,
+          lastSavedWord: extractLastWordFromTiptapJSON(newContent),
+        });
       } catch (e) {
         console.error('Failed to save doc', e);
+        useSaveSyncStore.getState().saveFailed({
+          message: e instanceof Error ? e.message : String(e),
+        });
       }
     }, 1000);
-  }, [DOC_ID]);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -57,6 +94,7 @@ export default function Home() {
   }, [saveContent]);
 
   const handleUpdate = (newContent: object) => {
+    useSaveSyncStore.getState().markEdited();
     saveContent(newContent);
   };
 
@@ -78,6 +116,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen w-full bg-black text-white relative">
+      <SaveSyncIndicator />
       <div className="container mx-auto px-4 py-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-4">
           <h1 className="text-2xl text-gray-400">Infinite Document</h1>
