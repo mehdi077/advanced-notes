@@ -17,13 +17,14 @@ type SaveSyncState = {
   lastAttemptAtMs: number | null;
   lastSavedAtMs: number | null;
   lastSavedWord: string | null;
+  lastSavedDocJson: object | null;
   lastError: SaveSyncError | null;
 
   setDocId: (docId: string) => void;
   markEdited: () => void;
-  hydrateFromServer: (opts: { lastSavedWord?: string | null } | null) => void;
+  hydrateFromServer: (opts: { doc?: object | null; lastSavedWord?: string | null } | null) => void;
   saveStarted: () => void;
-  saveSucceeded: (opts: { editSeq: number; lastSavedWord: string | null }) => void;
+  saveSucceeded: (opts: { editSeq: number; lastSavedWord: string | null; doc: object }) => void;
   saveFailed: (opts: { message: string; status?: number }) => void;
   setError: (opts: { message: string; status?: number }) => void;
 };
@@ -39,6 +40,7 @@ export const useSaveSyncStore = create<SaveSyncState>((set) => ({
   lastAttemptAtMs: null,
   lastSavedAtMs: null,
   lastSavedWord: null,
+  lastSavedDocJson: null,
   lastError: null,
 
   setDocId: (docId) => set({ docId }),
@@ -55,6 +57,7 @@ export const useSaveSyncStore = create<SaveSyncState>((set) => ({
       lastSavedEditSeq: s.editSeq,
       lastSavedAtMs: Date.now(),
       lastSavedWord: opts?.lastSavedWord ?? s.lastSavedWord,
+      lastSavedDocJson: opts?.doc ?? s.lastSavedDocJson,
       lastError: null,
     }));
   },
@@ -69,7 +72,7 @@ export const useSaveSyncStore = create<SaveSyncState>((set) => ({
     }));
   },
 
-  saveSucceeded: ({ editSeq, lastSavedWord }) => {
+  saveSucceeded: ({ editSeq, lastSavedWord, doc }) => {
     const now = Date.now();
     set(s => {
       const nextInFlight = Math.max(0, s.inFlightCount - 1);
@@ -78,6 +81,7 @@ export const useSaveSyncStore = create<SaveSyncState>((set) => ({
         inFlightCount: nextInFlight,
         lastSavedAtMs: now,
         lastSavedWord,
+        lastSavedDocJson: doc,
         lastSavedEditSeq,
         lastError: null,
       };

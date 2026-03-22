@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSaveSyncStore, selectIsDirty } from '@/lib/stores/save-sync-store';
 import { useUnlockStore } from '@/lib/stores/unlock-store';
 
@@ -14,16 +14,31 @@ export default function SaveSyncIndicator() {
   const lastSavedWord = useSaveSyncStore(s => s.lastSavedWord);
   const lastError = useSaveSyncStore(s => s.lastError);
   const isDirty = useSaveSyncStore(s => selectIsDirty(s));
+  const [isOnline, setIsOnline] = useState(() => {
+    if (typeof navigator === 'undefined') return true;
+    return navigator.onLine;
+  });
+
+  useEffect(() => {
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
 
   const kind: Kind = useMemo(() => {
     if (lastError?.status === 401) return 'locked';
     if (!unlockToken) return 'locked';
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
+    if (!isOnline) return 'offline';
     if (inFlightCount > 0) return 'saving';
     if (lastError && (!lastSavedAtMs || lastError.atMs > lastSavedAtMs)) return 'error';
     if (isDirty) return 'unsaved';
     return 'saved';
-  }, [unlockToken, inFlightCount, isDirty, lastError, lastSavedAtMs]);
+  }, [unlockToken, isOnline, inFlightCount, isDirty, lastError, lastSavedAtMs]);
 
   const label = useMemo(() => {
     if (!docId) return '…';

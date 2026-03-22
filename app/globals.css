@@ -64,6 +64,14 @@ body {
   border-radius: 2px;
 }
 
+/* Unsaved words underline (shown when Offline/Locked) */
+.an-unsaved-underline {
+  text-decoration-line: underline;
+  text-decoration-color: rgba(250, 204, 21, 0.95);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
 /* Audiobooks: editor spacing (separate from the main editor-area rules) */
 .audiobook-editor-area .ProseMirror {
   padding: 1.25rem 1rem;

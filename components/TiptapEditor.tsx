@@ -13,9 +13,12 @@ import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
 import { CompletionMark } from '@/lib/completion-mark';
 import { SavedCompletion } from '@/lib/saved-completion';
+import { UnsavedUnderline, UnsavedUnderlinePluginKey } from '@/lib/unsaved-underline';
 import { FontSize } from '@/lib/font-size';
 import Link from 'next/link';
 import { authFetch } from '@/lib/auth-fetch';
+import { useSaveSyncStore } from '@/lib/stores/save-sync-store';
+import { useUnlockStore } from '@/lib/stores/unlock-store';
 import PinAttemptLog from '@/components/PinAttemptLog';
 import PinResetForm from '@/components/PinResetForm';
 
@@ -409,6 +412,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       }),
       CompletionMark,
       SavedCompletion,
+      UnsavedUnderline,
     ],
     content: initialContent || '<p>> </p>',
     onUpdate: ({ editor }) => {
@@ -426,6 +430,34 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       },
     },
   });
+
+  const underlineDeps = useSaveSyncStore(s => ({
+    lastSavedAtMs: s.lastSavedAtMs,
+    lastErrorAtMs: s.lastError?.atMs ?? null,
+    lastErrorStatus: s.lastError?.status ?? null,
+  }));
+
+  const unlockToken = useUnlockStore(s => s.unlockToken);
+
+  useEffect(() => {
+    if (!editor) return;
+    editor.view.dispatch(editor.state.tr.setMeta(UnsavedUnderlinePluginKey, { recompute: true }));
+  }, [editor, unlockToken, underlineDeps.lastSavedAtMs, underlineDeps.lastErrorAtMs, underlineDeps.lastErrorStatus]);
+
+  useEffect(() => {
+    if (!editor) return;
+
+    const onConnectivityChange = () => {
+      editor.view.dispatch(editor.state.tr.setMeta(UnsavedUnderlinePluginKey, { recompute: true }));
+    };
+
+    window.addEventListener('online', onConnectivityChange);
+    window.addEventListener('offline', onConnectivityChange);
+    return () => {
+      window.removeEventListener('online', onConnectivityChange);
+      window.removeEventListener('offline', onConnectivityChange);
+    };
+  }, [editor]);
 
   // Get effective values (mobile uses hardcoded tight values)
   const effectiveLineHeight = isMobile ? 1.0 : lineHeight;
