@@ -431,18 +431,16 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     },
   });
 
-  const underlineDeps = useSaveSyncStore(s => ({
-    lastSavedAtMs: s.lastSavedAtMs,
-    lastErrorAtMs: s.lastError?.atMs ?? null,
-    lastErrorStatus: s.lastError?.status ?? null,
-  }));
+  const underlineLastSavedAtMs = useSaveSyncStore(s => s.lastSavedAtMs);
+  const underlineLastErrorAtMs = useSaveSyncStore(s => s.lastError?.atMs ?? null);
+  const underlineLastErrorStatus = useSaveSyncStore(s => s.lastError?.status ?? null);
 
   const unlockToken = useUnlockStore(s => s.unlockToken);
 
   useEffect(() => {
     if (!editor) return;
     editor.view.dispatch(editor.state.tr.setMeta(UnsavedUnderlinePluginKey, { recompute: true }));
-  }, [editor, unlockToken, underlineDeps.lastSavedAtMs, underlineDeps.lastErrorAtMs, underlineDeps.lastErrorStatus]);
+  }, [editor, unlockToken, underlineLastSavedAtMs, underlineLastErrorAtMs, underlineLastErrorStatus]);
 
   useEffect(() => {
     if (!editor) return;
