@@ -57,6 +57,34 @@ body {
   white-space: nowrap;
 }
 
+/* Bookmark/tag marker */
+.bookmark-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0 0.4rem;
+  height: 18px;
+  border-radius: 9999px;
+  background: rgba(59, 130, 246, 0.14);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  color: #93c5fd;
+  font-size: 11px;
+  line-height: 1;
+  vertical-align: middle;
+  user-select: none;
+}
+
+.bookmark-mark .bookmark-hash {
+  color: #60a5fa;
+}
+
+.bookmark-mark .bookmark-name {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Audiobooks: generated audio segment highlight */
 .audio-segment {
   background: rgba(250, 204, 21, 0.14);

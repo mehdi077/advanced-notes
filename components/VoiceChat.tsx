@@ -12,6 +12,7 @@ export default function VoiceChat() {
   const STORAGE_CHAT_SELECTED_MODEL_KEY = 'helm.chat.selectedModel';
   const STORAGE_CUSTOM_MODELS_KEY = 'helm.customModels';
   const STORAGE_EMBEDDING_MODEL_KEY = 'helm.embeddingModelId';
+  const STORAGE_CHAT_USE_RAG_KEY = 'helm.chat.useRagContext';
 
   type ChatRole = 'user' | 'assistant';
   interface ChatMessage {
@@ -34,7 +35,17 @@ export default function VoiceChat() {
   const [isSending, setIsSending] = useState(false);
   const [modelPricing, setModelPricing] = useState<ModelPricingMap>({});
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const autoResizeInput = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const maxPx = 160;
+    const next = Math.min(maxPx, el.scrollHeight);
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > maxPx ? 'auto' : 'hidden';
+  }, []);
 
   const loadModelPrefsFromStorage = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -60,7 +71,12 @@ export default function VoiceChat() {
     const rawEmbeddingModel = window.localStorage.getItem(STORAGE_EMBEDDING_MODEL_KEY);
     const em = rawEmbeddingModel?.trim();
     if (em) setEmbeddingModelId(em);
-  }, [STORAGE_CHAT_SELECTED_MODEL_KEY, STORAGE_CUSTOM_MODELS_KEY, STORAGE_EMBEDDING_MODEL_KEY]);
+
+    const rawUseRag = window.localStorage.getItem(STORAGE_CHAT_USE_RAG_KEY);
+    if (rawUseRag === 'true' || rawUseRag === 'false') {
+      setUseRagContext(rawUseRag === 'true');
+    }
+  }, [STORAGE_CHAT_SELECTED_MODEL_KEY, STORAGE_CUSTOM_MODELS_KEY, STORAGE_EMBEDDING_MODEL_KEY, STORAGE_CHAT_USE_RAG_KEY]);
 
   const allModels = useMemo(() => {
     const builtInIds = new Set(AVAILABLE_MODELS.map(m => m.id));
@@ -93,6 +109,11 @@ export default function VoiceChat() {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(STORAGE_CHAT_SELECTED_MODEL_KEY, String(selectedModel));
   }, [selectedModel]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(STORAGE_CHAT_USE_RAG_KEY, useRagContext ? 'true' : 'false');
+  }, [useRagContext]);
 
   useEffect(() => {
     // Fetch OpenRouter pricing (best-effort)
@@ -174,21 +195,26 @@ export default function VoiceChat() {
     }
   }, [input, isSending, messages, selectedModel, useRagContext, embeddingModelId]);
 
+  useEffect(() => {
+    if (!isModalOpen) return;
+    autoResizeInput();
+  }, [input, isModalOpen, autoResizeInput]);
+
   if (!isModalOpen) return null;
 
   return (
     <>
       {/* Backdrop blur */}
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" onClick={closeModal} />
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[200]" onClick={closeModal} />
       
       {/* Modal */}
-      <div className="fixed inset-0 z-50 flex items-stretch md:items-center justify-center p-0 md:p-4">
+      <div className="fixed inset-0 z-[210] flex items-stretch md:items-center justify-center p-0 md:p-4">
         <div className="relative bg-zinc-900 rounded-none md:rounded-2xl shadow-2xl border border-zinc-800 w-full md:max-w-3xl h-[100dvh] md:h-auto md:max-h-[80vh] flex flex-col overflow-hidden">
           
           {/* Close button */}
           <button
             onClick={closeModal}
-            className="absolute top-[calc(env(safe-area-inset-top)+0.75rem)] right-3 md:top-4 md:right-4 z-10 p-2 rounded-full bg-zinc-800 hover:bg-zinc-700 transition-colors text-zinc-400 hover:text-white"
+            className="absolute top-[calc(env(safe-area-inset-top)+0.75rem)] right-3 md:top-4 md:right-4 z-[220] p-2 rounded-full bg-zinc-800 hover:bg-zinc-700 transition-colors text-zinc-400 hover:text-white"
           >
             <X size={18} className="md:w-5 md:h-5" />
           </button>
@@ -279,7 +305,7 @@ export default function VoiceChat() {
 
             <div className="border-t border-zinc-800 px-3 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] md:p-4">
               <div className="flex gap-2">
-                <input
+                <textarea
                   ref={inputRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
@@ -289,8 +315,9 @@ export default function VoiceChat() {
                       void sendMessage();
                     }
                   }}
-                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-zinc-500"
-                  placeholder="Type a message…"
+                  rows={1}
+                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-zinc-500 resize-none leading-5"
+                  placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
                   disabled={isSending}
                 />
                 <button

@@ -8,11 +8,12 @@ import { Highlight } from '@tiptap/extension-highlight';
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { debounce } from 'lodash';
-import { ChevronRight, ChevronLeft, Bold, Strikethrough, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, MessageSquare, Play, Pause, SkipBack, SkipForward, Database, Plus, Minus, BookOpen } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Bold, Strikethrough, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, MessageSquare, Play, Pause, SkipBack, SkipForward, Database, Plus, Minus, BookOpen, Tag } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
 import { CompletionMark } from '@/lib/completion-mark';
 import { SavedCompletion } from '@/lib/saved-completion';
+import { Bookmark } from '@/lib/bookmark';
 import { UnsavedUnderline, UnsavedUnderlinePluginKey } from '@/lib/unsaved-underline';
 import { FontSize } from '@/lib/font-size';
 import Link from 'next/link';
@@ -81,7 +82,8 @@ interface AutocompleteRequestPreview {
 const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
-  const { setIsModalOpen } = useVoiceStore();
+  const setIsModalOpen = useVoiceStore(s => s.setIsModalOpen);
+  const isChatModalOpen = useVoiceStore(s => s.isModalOpen);
   const [selectedModel, setSelectedModel] = useState<ModelId>(DEFAULT_MODEL);
   const [customModelIds, setCustomModelIds] = useState<string[]>([]);
   const [hasLoadedModelPrefs, setHasLoadedModelPrefs] = useState(false);
@@ -412,6 +414,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       }),
       CompletionMark,
       SavedCompletion,
+      Bookmark,
       UnsavedUnderline,
     ],
     content: initialContent || '<p>> </p>',
@@ -1466,6 +1469,27 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   // Handle keyboard events
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Desktop panel shortcuts (avoid typing inside form inputs)
+      if (!isMobile && !isChatModalOpen && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const target = e.target as HTMLElement | null;
+        const tag = target?.tagName?.toLowerCase();
+        const isFormField = tag === 'input' || tag === 'textarea' || tag === 'select';
+
+        if (!isFormField) {
+          const k = e.key.toLowerCase();
+          if (k === 'r') {
+            e.preventDefault();
+            setIsSidebarOpen(v => !v);
+            return;
+          }
+          if (k === 'l') {
+            e.preventDefault();
+            setIsLeftSidebarOpen(v => !v);
+            return;
+          }
+        }
+      }
+
       // Handle Escape - cancel generation or completion
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -1522,7 +1546,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [completion.isActive, completion.selectedCount, isAutoCompleting, handleAutoComplete, handleRegenerate, confirmCompletion, cancelCompletion, cancelGeneration, selectNextWord, deselectLastWord, selectAllWords, saveCompletion]);
+  }, [completion.isActive, completion.selectedCount, isAutoCompleting, handleAutoComplete, handleRegenerate, confirmCompletion, cancelCompletion, cancelGeneration, selectNextWord, deselectLastWord, selectAllWords, saveCompletion, isMobile, isChatModalOpen]);
 
   // Handle clicks on saved completion markers
   useEffect(() => {
@@ -1570,12 +1594,34 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     }
   }, [initialContent, editor]);
 
+  const editorDoc = editor?.state.doc ?? null;
+  const bookmarks = useMemo(() => {
+    if (!editorDoc) return [] as Array<{ id: string; name: string }>;
+
+    const out: Array<{ id: string; name: string }> = [];
+    editorDoc.descendants((node) => {
+      if (node.type.name !== 'bookmark') return;
+      const id = (node.attrs as { id?: unknown })?.id;
+      const name = (node.attrs as { name?: unknown })?.name;
+      if (typeof id === 'string' && id.trim()) {
+        out.push({ id, name: typeof name === 'string' ? name : '' });
+      }
+    });
+
+    const seen = new Set<string>();
+    return out.filter((b) => {
+      if (seen.has(b.id)) return false;
+      seen.add(b.id);
+      return true;
+    });
+  }, [editorDoc]);
+
   if (!editor) {
     return null;
   }
 
-  const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
-  const toggleLeftSidebar = () => setIsLeftSidebarOpen(!isLeftSidebarOpen);
+  const toggleSidebar = () => setIsSidebarOpen(v => !v);
+  const toggleLeftSidebar = () => setIsLeftSidebarOpen(v => !v);
 
   const getCurrentFontSizePx = () => {
     const attrs = editor.getAttributes('textStyle') as { fontSize?: unknown };
@@ -1596,6 +1642,24 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const insertStarBlock = () => {
     editor.commands.focus();
     editor.commands.insertSavedCompletion('');
+  };
+
+  const makeId = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  };
+
+  const insertBookmarkTag = () => {
+    const name = typeof window === 'undefined' ? '' : (window.prompt('Tag name') ?? '');
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    editor.chain().focus().insertBookmark({ id: makeId(), name: trimmed }).run();
+  };
+
+  const scrollToBookmark = (id: string) => {
+    const esc = typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(id) : id.replace(/["\\]/g, '\\$&');
+    const el = editor.view.dom.querySelector(`[data-bookmark-id="${esc}"]`) as HTMLElement | null;
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
   const closeSavedCompletionPopup = () => {
@@ -2119,6 +2183,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         type="button"
         ref={leftToggleRef}
         onClick={toggleLeftSidebar}
+        title="Toggle left panel (Shift+L)"
         className={`fixed top-8 z-[60] p-2 bg-zinc-800 rounded-r-md text-white transition-all duration-300 cursor-pointer hover:bg-zinc-700 ${
           isLeftSidebarOpen ? 'left-72 max-md:left-72' : 'left-0'
         }`}
@@ -2144,6 +2209,40 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
           >
             ★
           </button>
+
+          <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-zinc-400 flex items-center gap-2">
+                <Tag size={16} />
+                Tags
+              </span>
+              <button
+                type="button"
+                onClick={insertBookmarkTag}
+                className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs text-zinc-200 transition-colors cursor-pointer"
+                title="Insert a tag at the cursor"
+              >
+                Insert
+              </button>
+            </div>
+            {bookmarks.length === 0 ? (
+              <div className="text-xs text-zinc-500">No tags yet.</div>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {bookmarks.map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => scrollToBookmark(b.id)}
+                    className="w-full text-left px-2 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs text-zinc-200 transition-colors cursor-pointer truncate"
+                    title={`Jump to: ${b.name || b.id}`}
+                  >
+                    {b.name || b.id}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {lastRequestPreview && (
             <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
@@ -2311,6 +2410,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         type="button"
         ref={rightToggleRef}
         onClick={toggleSidebar}
+        title="Toggle right panel (Shift+R)"
         className={`fixed top-8 z-[60] p-2 bg-zinc-800 rounded-l-md text-white transition-all duration-300 cursor-pointer hover:bg-zinc-700 ${
           isSidebarOpen ? 'right-64 max-md:right-64' : 'right-0'
         }`}
