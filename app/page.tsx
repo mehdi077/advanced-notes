@@ -4,7 +4,7 @@ import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { debounce } from 'lodash';
 import TiptapEditor from '../components/TiptapEditor';
 import VoiceChat from '../components/VoiceChat';
-import { ArrowDown, MessageSquare, Plus, Settings2, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, MessageSquare, Plus, Settings2, Trash2, X } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { authFetch } from '@/lib/auth-fetch';
 import SaveSyncIndicator from '@/components/SaveSyncIndicator';
@@ -18,6 +18,33 @@ const DEFAULT_JUMP_BUTTON_COLOR = '#3b82f6';
 
 type BookmarkInfo = { id: string; name: string };
 type JumpButton = { id: string; label: string; bookmarkId: string | null; color: string };
+
+function extractBookmarksFromDocJson(doc: unknown): BookmarkInfo[] {
+  const out: BookmarkInfo[] = [];
+
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== 'object') return;
+    const n = node as { type?: unknown; attrs?: unknown; content?: unknown };
+    if (n.type === 'bookmark') {
+      const attrs = (n.attrs ?? {}) as { id?: unknown; name?: unknown };
+      const id = typeof attrs.id === 'string' ? attrs.id : '';
+      const name = typeof attrs.name === 'string' ? attrs.name : '';
+      if (id) out.push({ id, name });
+    }
+    const children = (n.content ?? null) as unknown;
+    if (Array.isArray(children)) {
+      for (const c of children) walk(c);
+    }
+  };
+
+  walk(doc);
+  const seen = new Set<string>();
+  return out.filter((b) => {
+    if (seen.has(b.id)) return false;
+    seen.add(b.id);
+    return true;
+  });
+}
 
 function makeId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -51,36 +78,14 @@ export default function Home() {
 
   const [jumpButtons, setJumpButtons] = useState<JumpButton[]>([]);
   const [jumpButtonsError, setJumpButtonsError] = useState<string | null>(null);
+  const [availableBookmarks, setAvailableBookmarks] = useState<BookmarkInfo[]>([]);
   const [isJumpButtonModalOpen, setIsJumpButtonModalOpen] = useState(false);
   const [jumpButtonDraft, setJumpButtonDraft] = useState<JumpButton | null>(null);
   const [isJumpButtonDraftNew, setIsJumpButtonDraftNew] = useState(false);
 
-  const bookmarks: BookmarkInfo[] = useMemo(() => {
-    const root = content as unknown;
-    const out: BookmarkInfo[] = [];
-
-    const walk = (node: unknown) => {
-      if (!node || typeof node !== 'object') return;
-      const n = node as { type?: unknown; attrs?: unknown; content?: unknown };
-      if (n.type === 'bookmark') {
-        const attrs = (n.attrs ?? {}) as { id?: unknown; name?: unknown };
-        const id = typeof attrs.id === 'string' ? attrs.id : '';
-        const name = typeof attrs.name === 'string' ? attrs.name : '';
-        if (id) out.push({ id, name });
-      }
-      const children = (n.content ?? null) as unknown;
-      if (Array.isArray(children)) {
-        for (const c of children) walk(c);
-      }
-    };
-
-    walk(root);
-    const seen = new Set<string>();
-    return out.filter((b) => {
-      if (seen.has(b.id)) return false;
-      seen.add(b.id);
-      return true;
-    });
+  const refreshAvailableBookmarks = useCallback(() => {
+    const doc = (latestContentRef.current ?? content) as unknown;
+    setAvailableBookmarks(extractBookmarksFromDocJson(doc));
   }, [content]);
 
   const loadJumpButtons = useCallback(async () => {
@@ -138,7 +143,10 @@ export default function Home() {
   };
 
   const openNewJumpButton = () => {
-    const first = bookmarks[0]?.id ?? null;
+    const doc = (latestContentRef.current ?? content) as unknown;
+    const current = extractBookmarksFromDocJson(doc);
+    setAvailableBookmarks(current);
+    const first = current[0]?.id ?? null;
     setJumpButtonDraft({
       id: makeId(),
       label: `Jump ${jumpButtons.length + 1}`,
@@ -150,6 +158,7 @@ export default function Home() {
   };
 
   const openEditJumpButton = (id: string) => {
+    refreshAvailableBookmarks();
     const found = jumpButtons.find((b) => b.id === id);
     if (!found) return;
     setJumpButtonDraft({ ...found });
@@ -442,7 +451,7 @@ export default function Home() {
           <div className="mb-4">
             <div className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1 -mx-1 px-1">
               {jumpButtons.map((b) => {
-                const hasTarget = b.bookmarkId && bookmarks.some((t) => t.id === b.bookmarkId);
+                const hasTarget = b.bookmarkId && availableBookmarks.some((t) => t.id === b.bookmarkId);
                 const bg = isHexColor(b.color) ? b.color : DEFAULT_JUMP_BUTTON_COLOR;
                 const fg = textColorForBg(bg);
                 return (
@@ -492,6 +501,19 @@ export default function Home() {
         <MessageSquare size={24} className="text-white" />
       </button>
 
+      {/* Scroll-to-top button */}
+      <button
+        type="button"
+        onClick={() => {
+          if (typeof window === 'undefined') return;
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        className="fixed bottom-[calc(env(safe-area-inset-bottom)+1.5rem)] left-6 md:bottom-8 md:left-8 w-14 h-14 md:w-16 md:h-16 rounded-full bg-zinc-800 hover:bg-zinc-700 shadow-lg transition-colors z-[35] flex items-center justify-center border border-zinc-700"
+        title="Scroll to top"
+      >
+        <ArrowUp size={24} className="text-white" />
+      </button>
+
       {/* Voice Chat Modal */}
       <VoiceChat />
 
@@ -536,13 +558,13 @@ export default function Home() {
                     className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-zinc-500"
                   >
                     <option value="">Select a tag…</option>
-                    {bookmarks.map((t) => (
+                    {availableBookmarks.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.name || t.id}
                       </option>
                     ))}
                   </select>
-                  {bookmarks.length === 0 && (
+                  {availableBookmarks.length === 0 && (
                     <div className="text-[11px] text-zinc-500">
                       No tags yet. Add one from the editor right panel → <span className="font-medium">Tags</span> →{' '}
                       <span className="font-medium">Insert</span>.
