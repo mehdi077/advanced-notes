@@ -1,12 +1,14 @@
 import { ChatOpenAI } from '@langchain/openai';
 
 export type BuiltInModelId = 
-  | 'openai/gpt-4o'
   | 'openai/gpt-4o-mini'
+  | 'openai/gpt-4o'
   | 'anthropic/claude-3.5-sonnet'
   | 'x-ai/grok-4.1-fast'
   | 'deepseek/deepseek-v3.2-exp'
-  | 'meta-llama/llama-3.1-70b-instruct';
+  | 'x-ai/grok-4.20'
+  | 'openai/gpt-5.4'
+  | 'anthropic/claude-sonnet-4.6';
 
 // OpenRouter model ids are strings like "openai/gpt-4o-mini" or "liquid/lfm-2.5-1.2b-thinking:free".
 // We keep a built-in union for common models, but allow any valid OpenRouter model id.
@@ -30,7 +32,9 @@ export const AVAILABLE_MODELS: ModelConfig[] = [
   { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Excellent writing quality' },
   { id: 'x-ai/grok-4.1-fast', name: 'grok-4.1-fast', description: 'Xai model' },
   { id: 'deepseek/deepseek-v3.2-exp', name: 'Deepseek v3.2 exp', description: 'deepseek/deepseek-v3.2-exp' },
-  { id: 'meta-llama/llama-3.1-70b-instruct', name: 'Llama 3.1 70B', description: 'Open source model' },
+  { id: 'x-ai/grok-4.20', name: 'grok-4.20', description: 'grok-4.20' },
+  { id: 'openai/gpt-5.4', name: 'gpt-5.4', description: 'gpt-5.4' },
+  { id: 'anthropic/claude-sonnet-4.6', name: 'claude-sonnet-4.6', description: 'claude-sonnet-4.6' },
 ];
 
 export function formatCost(cost: number): string {

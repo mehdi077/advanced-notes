@@ -123,7 +123,7 @@ export async function POST(request: NextRequest) {
     const ragContext = useRagContext && lastUserMessage ? await getRAGContext(lastUserMessage, embeddingModelId) : '';
 
     let systemPromptContent =
-      'You are a helpful assistant. Be concise and correct. If the user asks about the document, use the provided context.';
+      'You are a helpful and truthful assistant. Be concise and correct. If the user asks about the document, use the provided context.';
     if (ragContext) {
       systemPromptContent +=
         '\n\nHere is relevant context from the document:\n\n' +
