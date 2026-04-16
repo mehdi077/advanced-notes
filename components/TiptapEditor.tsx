@@ -1823,6 +1823,13 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
           <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
             <span className="text-sm text-zinc-400">Navigate</span>
             <Link
+              href="/openclaw-journals"
+              className="flex items-center justify-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 rounded text-white font-medium transition-colors cursor-pointer"
+            >
+              <Tag size={18} />
+              Journals
+            </Link>
+            <Link
               href="/audiobooks"
               className="flex items-center justify-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 rounded text-white font-medium transition-colors cursor-pointer"
             >

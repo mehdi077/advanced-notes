@@ -414,6 +414,104 @@ input[type="range"]::-moz-range-thumb {
   }
 }
 
+/* ── Openclaw Journals ───────────────────────────────────────────── */
+
+/* Seamless wrapper — no background, no borders */
+.journal-container {
+  position: relative;
+}
+
+/* Both editors share identical base styling */
+.journal-editor-content .ProseMirror {
+  outline: none;
+  min-height: 2rem;
+  font-size: 1rem;
+  line-height: 1.7;
+  color: #e4e4e7; /* zinc-200 */
+  padding: 0;
+}
+
+.journal-editor-content .ProseMirror p {
+  margin: 0 0 0.35em 0;
+}
+
+.journal-writing-area .journal-editor-content .ProseMirror {
+  min-height: 60vh;
+}
+
+/* Separator — indented, doesn't touch viewport edges */
+.journal-separator {
+  display: flex;
+  align-items: center;
+  padding: 1.25rem 3rem;
+}
+
+@media (min-width: 768px) {
+  .journal-separator {
+    padding: 1.5rem 5rem;
+  }
+}
+
+.journal-separator-line {
+  flex: 1;
+  height: 1px;
+  background: #3f3f46; /* zinc-700 */
+}
+
+/* Paragraph wrapper for send button */
+.paragraph-send-wrapper {
+  position: relative;
+}
+
+/* Send button — always in DOM, visibility controlled via opacity */
+.send-para-btn {
+  position: absolute;
+  right: -1.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.25rem;
+  height: 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.25rem;
+  color: #71717a; /* zinc-500 */
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s, opacity 0.15s;
+  /* Mobile: subtly visible */
+  opacity: 0.35;
+}
+
+.send-para-btn:hover:not(:disabled) {
+  color: #e4e4e7; /* zinc-200 */
+  opacity: 1;
+}
+
+.send-para-btn:disabled {
+  opacity: 0.2;
+  cursor: not-allowed;
+}
+
+/* Desktop: hide by default, show on paragraph hover */
+@media (hover: hover) {
+  .send-para-btn {
+    opacity: 0;
+  }
+
+  .paragraph-send-wrapper:hover .send-para-btn {
+    opacity: 0.6;
+  }
+
+  .paragraph-send-wrapper:hover .send-para-btn:hover:not(:disabled) {
+    opacity: 1;
+    color: #e4e4e7;
+  }
+}
+
+/* ── end Openclaw Journals ───────────────────────────────────────── */
+
 /* Mobile FAB touch fix - ensure FAB is always clickable above editor */
 @media (max-width: 768px) {
   .editor-area {
