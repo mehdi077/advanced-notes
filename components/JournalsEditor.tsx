@@ -2,7 +2,7 @@
 
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Send } from 'lucide-react';
 import { authFetch } from '@/lib/auth-fetch';
 
@@ -26,6 +26,11 @@ export default function JournalsEditor({
   const writingInitialized = useRef(false);
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  // Tracked as state so button re-enables correctly after content changes
+  const [hasContent, setHasContent] = useState(false);
+
+  // Ref so the Ctrl+Enter listener always calls the latest version
+  const handleSendRef = useRef<() => Promise<void>>(async () => {});
 
   const sentEditor = useEditor({
     immediatelyRender: false,
@@ -41,6 +46,7 @@ export default function JournalsEditor({
     editable: true,
     onUpdate: ({ editor }) => {
       onWritingUpdate(editor.getJSON());
+      setHasContent(editor.getText().trim().length > 0);
     },
   });
 
@@ -56,11 +62,12 @@ export default function JournalsEditor({
     if (!writingEditor || writingInitialized.current) return;
     if (writingContent) {
       writingEditor.commands.setContent(writingContent);
+      setHasContent(writingEditor.getText().trim().length > 0);
       writingInitialized.current = true;
     }
   }, [writingEditor, writingContent]);
 
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     if (!writingEditor || !sentEditor || isSending) return;
     const text = writingEditor.getText({ blockSeparator: '\n' }).trim();
     if (!text) return;
@@ -85,7 +92,6 @@ export default function JournalsEditor({
       const sentJson = sentEditor.getJSON();
       const existing = Array.isArray(sentJson.content) ? sentJson.content : [];
       const updated = { type: 'doc', content: [...existing, ...newNodes] };
-
       sentEditor.commands.setContent(updated);
       onSentUpdate(updated);
 
@@ -93,14 +99,30 @@ export default function JournalsEditor({
       const empty = { type: 'doc', content: [{ type: 'paragraph' }] };
       writingEditor.commands.setContent(empty);
       onWritingUpdate(empty);
+      setHasContent(false);
     } catch (e) {
       setSendError(e instanceof Error ? e.message : 'Send failed');
     } finally {
       setIsSending(false);
     }
-  };
+  }, [writingEditor, sentEditor, isSending, onSentUpdate, onWritingUpdate]);
 
-  const hasContent = writingEditor ? writingEditor.getText().trim().length > 0 : false;
+  // Keep ref in sync so keyboard listener is never stale
+  useEffect(() => {
+    handleSendRef.current = handleSend;
+  }, [handleSend]);
+
+  // Ctrl+Enter keyboard shortcut (desktop)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault();
+        void handleSendRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   return (
     <div className="journal-container">
@@ -117,12 +139,13 @@ export default function JournalsEditor({
         <div className="journal-separator-line" />
         <button
           type="button"
-          onClick={handleSend}
+          onClick={() => void handleSend()}
           disabled={isSending || !hasContent}
           className="journal-send-btn"
-          title="Send to OpenClaw"
+          title="Send to OpenClaw (Ctrl+Enter)"
         >
-          {isSending ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+          {isSending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+          <span>{isSending ? 'Sending…' : 'Send'}</span>
         </button>
       </div>
 
