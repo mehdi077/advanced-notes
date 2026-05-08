@@ -4,8 +4,7 @@ import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { debounce } from 'lodash';
 import TiptapEditor from '../components/TiptapEditor';
 import VoiceChat from '../components/VoiceChat';
-import { ArrowDown, ArrowUp, MessageSquare, Plus, Settings2, Trash2, X } from 'lucide-react';
-import { useVoiceStore } from '@/lib/stores/useVoiceStore';
+import { ArrowDown, ArrowUp, Plus, Settings2, Trash2, X } from 'lucide-react';
 import { authFetch } from '@/lib/auth-fetch';
 import SaveSyncIndicator from '@/components/SaveSyncIndicator';
 import { useSaveSyncStore } from '@/lib/stores/save-sync-store';
@@ -72,7 +71,6 @@ function cssEscape(value: string): string {
 export default function Home() {
   const [content, setContent] = useState<object | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const { setIsModalOpen } = useVoiceStore();
   const unlockToken = useUnlockStore(s => s.unlockToken);
   const latestContentRef = useRef<object | null>(null);
 
@@ -491,15 +489,6 @@ export default function Home() {
 
         <TiptapEditor initialContent={content} onContentUpdate={handleUpdate} />
       </div>
-
-      {/* Floating Voice Button - positioned above editor content */}
-      <button
-        onClick={() => setIsModalOpen(true)}
-        className="fixed bottom-[calc(env(safe-area-inset-bottom)+1.5rem)] right-6 md:bottom-8 md:right-8 w-14 h-14 md:w-16 md:h-16 rounded-full bg-purple-600 hover:bg-purple-700 shadow-lg transition-colors z-[35] flex items-center justify-center"
-        title="Open Chat"
-      >
-        <MessageSquare size={24} className="text-white" />
-      </button>
 
       {/* Scroll-to-top button */}
       <button

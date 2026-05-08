@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   getEditorCompletionAudio,
+  getEditorSelectedModelId,
   getEditorUseRagContext,
   setEditorCompletionAudio,
+  setEditorSelectedModelId,
   setEditorUseRagContext,
 } from '@/lib/editor-settings';
 import { requireUnlocked } from '@/lib/unlock-server';
@@ -15,6 +17,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       useRagContext: getEditorUseRagContext(),
       completionAudio: getEditorCompletionAudio(),
+      selectedModelId: getEditorSelectedModelId(),
     });
   } catch (error) {
     console.error('Editor settings GET error:', error);
@@ -32,6 +35,7 @@ export async function POST(request: NextRequest) {
     let changed = false;
     let useRagContext = getEditorUseRagContext();
     let completionAudio = getEditorCompletionAudio();
+    let selectedModelId = getEditorSelectedModelId();
 
     if (typeof body.useRagContext === 'boolean') {
       useRagContext = setEditorUseRagContext(body.useRagContext);
@@ -43,11 +47,16 @@ export async function POST(request: NextRequest) {
       changed = true;
     }
 
+    if (typeof body.selectedModelId === 'string') {
+      selectedModelId = setEditorSelectedModelId(body.selectedModelId);
+      changed = true;
+    }
+
     if (!changed) {
       return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
     }
 
-    return NextResponse.json({ useRagContext, completionAudio });
+    return NextResponse.json({ useRagContext, completionAudio, selectedModelId });
   } catch (error) {
     console.error('Editor settings POST error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });

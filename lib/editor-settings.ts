@@ -1,7 +1,9 @@
 import db from '@/lib/db';
+import { getFallbackModelId, modelExists } from '@/lib/model-store';
 
 const KEY_USE_RAG_CONTEXT = 'editor.useRagContext';
 const KEY_COMPLETION_AUDIO = 'editor.completionAudio';
+const KEY_SELECTED_MODEL_ID = 'editor.selectedModelId';
 
 function parseBool(raw: string | null | undefined, defaultValue: boolean): boolean {
   if (!raw) return defaultValue;
@@ -40,4 +42,20 @@ export function getEditorCompletionAudio(): boolean {
 export function setEditorCompletionAudio(enabled: boolean): boolean {
   setSetting(KEY_COMPLETION_AUDIO, enabled ? '1' : '0');
   return enabled;
+}
+
+export function getEditorSelectedModelId(): string {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(KEY_SELECTED_MODEL_ID) as { value: string } | undefined;
+  const modelId = row?.value?.trim();
+  if (modelId && modelExists(modelId)) return modelId;
+  return getFallbackModelId();
+}
+
+export function setEditorSelectedModelId(modelId: string): string {
+  const id = modelId.trim();
+  if (!id || !modelExists(id)) {
+    throw new Error('Unknown model id');
+  }
+  setSetting(KEY_SELECTED_MODEL_ID, id);
+  return id;
 }

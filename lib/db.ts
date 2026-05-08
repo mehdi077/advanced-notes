@@ -35,6 +35,67 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS llm_models (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_conversations (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    system_prompt TEXT NOT NULL DEFAULT '',
+    use_rag_context INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+    content TEXT NOT NULL,
+    rag_context TEXT,
+    model_id TEXT,
+    position INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE
+  )
+`);
+
+db.exec('CREATE INDEX IF NOT EXISTS chat_messages_conversation_idx ON chat_messages(conversation_id, position)');
+db.exec('CREATE INDEX IF NOT EXISTS chat_conversations_updated_idx ON chat_conversations(updated_at DESC)');
+
+(() => {
+  const count = db.prepare('SELECT COUNT(*) AS count FROM llm_models').get() as { count: number };
+  if (count.count > 0) return;
+
+  const now = new Date().toISOString();
+  const seed = db.prepare(
+    `INSERT OR IGNORE INTO llm_models (id, name, description, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)`
+  );
+  const defaults: Array<{ id: string; name: string; description: string }> = [
+    { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', description: 'Fast and affordable' },
+    { id: 'openai/gpt-4o', name: 'GPT-4o', description: 'Most capable OpenAI model' },
+    { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Excellent writing quality' },
+    { id: 'x-ai/grok-4.1-fast', name: 'grok-4.1-fast', description: 'Xai model' },
+    { id: 'deepseek/deepseek-v3.2-exp', name: 'Deepseek v3.2 exp', description: 'deepseek/deepseek-v3.2-exp' },
+    { id: 'x-ai/grok-4.20', name: 'grok-4.20', description: 'grok-4.20' },
+    { id: 'openai/gpt-5.4', name: 'gpt-5.4', description: 'gpt-5.4' },
+    { id: 'anthropic/claude-sonnet-4.6', name: 'claude-sonnet-4.6', description: 'claude-sonnet-4.6' },
+  ];
+  for (const m of defaults) seed.run(m.id, m.name, m.description, now, now);
+})();
+
 // Embeddings table for RAG system
 // Embeddings table for RAG system (supports multiple embedding models)
 // NOTE: We migrate older schema (single-model) to this schema on startup.
@@ -56,6 +117,64 @@ function tableExists(tableName: string): boolean {
     .get(tableName) as { name: string } | undefined;
   return Boolean(row?.name);
 }
+
+if (!tableHasColumn('llm_models', 'input_modalities')) {
+  db.exec("ALTER TABLE llm_models ADD COLUMN input_modalities TEXT NOT NULL DEFAULT '[\"text\"]'");
+}
+
+if (!tableHasColumn('llm_models', 'supports_vision')) {
+  db.exec('ALTER TABLE llm_models ADD COLUMN supports_vision INTEGER NOT NULL DEFAULT 0');
+}
+
+if (!tableHasColumn('llm_models', 'prompt_price_per_million')) {
+  db.exec('ALTER TABLE llm_models ADD COLUMN prompt_price_per_million REAL');
+}
+
+if (!tableHasColumn('llm_models', 'completion_price_per_million')) {
+  db.exec('ALTER TABLE llm_models ADD COLUMN completion_price_per_million REAL');
+}
+
+if (!tableHasColumn('llm_models', 'image_price')) {
+  db.exec('ALTER TABLE llm_models ADD COLUMN image_price REAL');
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_attachments (
+    id TEXT PRIMARY KEY,
+    message_id TEXT,
+    conversation_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('upload', 'screenshot')),
+    mime_type TEXT NOT NULL,
+    data_url TEXT NOT NULL,
+    file_name TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(message_id) REFERENCES chat_messages(id) ON DELETE CASCADE,
+    FOREIGN KEY(conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE
+  )
+`);
+
+db.exec('CREATE INDEX IF NOT EXISTS chat_attachments_conversation_idx ON chat_attachments(conversation_id, created_at)');
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS openrouter_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT,
+    message_id TEXT,
+    model_id TEXT NOT NULL,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    prompt_cost REAL NOT NULL DEFAULT 0,
+    completion_cost REAL NOT NULL DEFAULT 0,
+    image_cost REAL NOT NULL DEFAULT 0,
+    total_cost REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(conversation_id) REFERENCES chat_conversations(id) ON DELETE SET NULL,
+    FOREIGN KEY(message_id) REFERENCES chat_messages(id) ON DELETE SET NULL
+  )
+`);
+
+db.exec('CREATE INDEX IF NOT EXISTS openrouter_usage_model_idx ON openrouter_usage(model_id, created_at)');
 
 // Ensure the multi-model schema exists; migrate legacy tables if needed.
 (() => {

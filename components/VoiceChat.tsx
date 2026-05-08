@@ -1,342 +1,952 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject, type WheelEvent } from 'react';
+import { Camera, DollarSign, Eye, EyeOff, Image as ImageIcon, MessageSquarePlus, Plus, Send, Trash2, X } from 'lucide-react';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
-import { X, Send } from 'lucide-react';
-import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
+import { ModelConfig, ModelPricing, formatCost } from '@/lib/model-config';
 import { authFetch } from '@/lib/auth-fetch';
 
+type ChatRole = 'user' | 'assistant';
+
+type ChatMessage = {
+  id: string;
+  conversationId: string;
+  role: ChatRole;
+  content: string;
+  ragContext: string | null;
+  modelId: string | null;
+  position: number;
+  createdAt: string;
+  attachments?: ChatAttachment[];
+};
+
+type ChatAttachment = {
+  id?: string;
+  messageId?: string | null;
+  conversationId?: string;
+  kind: 'upload' | 'screenshot';
+  mimeType: string;
+  dataUrl: string;
+  fileName?: string | null;
+  createdAt?: string;
+};
+
+type ChatConversation = {
+  id: string;
+  title: string;
+  modelId: string;
+  systemPrompt: string;
+  useRagContext: boolean;
+  createdAt: string;
+  updatedAt: string;
+  messageCount?: number;
+};
+
+type ChatSettings = {
+  currentConversationId: string;
+  selectedModelId: string;
+  systemPrompt: string;
+  useRagContext: boolean;
+};
+
+type ConversationPayload = {
+  conversation: ChatConversation;
+  messages: ChatMessage[];
+};
+
+type ActiveTab = 'current' | 'history' | 'settings' | 'open';
+
+type ModelPricingMap = Record<string, ModelPricing | undefined>;
+
+type ModelSpend = {
+  modelId: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  imageCost: number;
+};
+
 export default function VoiceChat() {
-  const { isModalOpen, setIsModalOpen } = useVoiceStore();
+  const isOpen = useVoiceStore(s => s.isModalOpen);
+  const setIsOpen = useVoiceStore(s => s.setIsModalOpen);
 
-  const STORAGE_CHAT_SELECTED_MODEL_KEY = 'helm.chat.selectedModel';
-  const STORAGE_CUSTOM_MODELS_KEY = 'helm.customModels';
-  const STORAGE_EMBEDDING_MODEL_KEY = 'helm.embeddingModelId';
-  const STORAGE_CHAT_USE_RAG_KEY = 'helm.chat.useRagContext';
-
-  type ChatRole = 'user' | 'assistant';
-  interface ChatMessage {
-    role: ChatRole;
-    content: string;
-    ragContext?: string | null;
-  }
-
-  interface ModelPricingMap {
-    [modelId: string]: ModelPricing;
-  }
-
-  const [selectedModel, setSelectedModel] = useState<ModelId>(DEFAULT_MODEL);
-  const [customModelIds, setCustomModelIds] = useState<string[]>([]);
-  const [useRagContext, setUseRagContext] = useState(true);
-  const [embeddingModelId, setEmbeddingModelId] = useState('qwen/qwen3-embedding-8b');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activeTab, setActiveTab] = useState<ActiveTab>('current');
+  const [models, setModels] = useState<ModelConfig[]>([]);
+  const [modelPricing, setModelPricing] = useState<ModelPricingMap>({});
+  const [modelSpend, setModelSpend] = useState<ModelSpend[]>([]);
+  const [settings, setSettings] = useState<ChatSettings | null>(null);
+  const [current, setCurrent] = useState<ConversationPayload | null>(null);
+  const [openChat, setOpenChat] = useState<ConversationPayload | null>(null);
+  const [history, setHistory] = useState<ChatConversation[]>([]);
   const [input, setInput] = useState('');
+  const [openInput, setOpenInput] = useState('');
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [openAttachments, setOpenAttachments] = useState<ChatAttachment[]>([]);
+  const [pendingScreenshot, setPendingScreenshot] = useState<ChatAttachment | null>(null);
+  const [newModelId, setNewModelId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
-  const [modelPricing, setModelPricing] = useState<ModelPricingMap>({});
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [settingsDirty, setSettingsDirty] = useState(false);
 
-  const autoResizeInput = useCallback(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    const maxPx = 160;
-    const next = Math.min(maxPx, el.scrollHeight);
-    el.style.height = `${next}px`;
-    el.style.overflowY = el.scrollHeight > maxPx ? 'auto' : 'hidden';
+  const currentScrollRef = useRef<HTMLDivElement | null>(null);
+  const openScrollRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const bodyOverflowRef = useRef<string | null>(null);
+  const bodyOverscrollRef = useRef<string | null>(null);
+
+  const activePayload = activeTab === 'open' ? openChat : current;
+  const activeInput = activeTab === 'open' ? openInput : input;
+  const activeAttachments = activeTab === 'open' ? openAttachments : attachments;
+  const activeModel = models.find((m) => m.id === activePayload?.conversation.modelId);
+  const activeSupportsVision = Boolean(activeModel?.supportsVision);
+
+  const loadModels = useCallback(async () => {
+    const res = await authFetch('/api/models');
+    if (!res.ok) return;
+    const data = (await res.json()) as { models?: ModelConfig[]; spend?: ModelSpend[] };
+    const nextModels = Array.isArray(data.models) ? data.models : [];
+    setModels(nextModels);
+    setModelSpend(Array.isArray(data.spend) ? data.spend : []);
+    const pricing: ModelPricingMap = {};
+    for (const m of nextModels) {
+      if (m.pricing) pricing[m.id] = m.pricing;
+    }
+    setModelPricing(pricing);
   }, []);
 
-  const loadModelPrefsFromStorage = useCallback(() => {
-    if (typeof window === 'undefined') return;
-
-    const rawCustom = window.localStorage.getItem(STORAGE_CUSTOM_MODELS_KEY);
-    if (rawCustom) {
-      try {
-        const parsed: unknown = JSON.parse(rawCustom);
-        if (Array.isArray(parsed)) {
-          setCustomModelIds(parsed.filter((v): v is string => typeof v === 'string').map(s => s.trim()).filter(Boolean));
-        }
-      } catch {
-        // ignore
-      }
-    } else {
-      setCustomModelIds([]);
-    }
-
-    const rawSelected = window.localStorage.getItem(STORAGE_CHAT_SELECTED_MODEL_KEY);
-    const selected = rawSelected?.trim();
-    if (selected) setSelectedModel(selected as ModelId);
-
-    const rawEmbeddingModel = window.localStorage.getItem(STORAGE_EMBEDDING_MODEL_KEY);
-    const em = rawEmbeddingModel?.trim();
-    if (em) setEmbeddingModelId(em);
-
-    const rawUseRag = window.localStorage.getItem(STORAGE_CHAT_USE_RAG_KEY);
-    if (rawUseRag === 'true' || rawUseRag === 'false') {
-      setUseRagContext(rawUseRag === 'true');
-    }
-  }, [STORAGE_CHAT_SELECTED_MODEL_KEY, STORAGE_CUSTOM_MODELS_KEY, STORAGE_EMBEDDING_MODEL_KEY, STORAGE_CHAT_USE_RAG_KEY]);
-
-  const allModels = useMemo(() => {
-    const builtInIds = new Set(AVAILABLE_MODELS.map(m => m.id));
-    const custom = customModelIds
-      .map(s => s.trim())
-      .filter(Boolean)
-      .filter(id => !builtInIds.has(id as ModelId))
-      .map((id) => ({ id: id as ModelId, name: id, description: 'Custom OpenRouter model' }));
-    return [...AVAILABLE_MODELS, ...custom];
-  }, [customModelIds]);
-
-  useEffect(() => {
-    if (!isModalOpen) return;
-    setError(null);
-    const t = window.setTimeout(() => inputRef.current?.focus(), 0);
-    return () => window.clearTimeout(t);
-  }, [isModalOpen]);
-
-  useEffect(() => {
-    loadModelPrefsFromStorage();
-  }, [loadModelPrefsFromStorage]);
-
-  // Refresh custom models when opening the chat so changes made in the editor sidepanel show up.
-  useEffect(() => {
-    if (!isModalOpen) return;
-    loadModelPrefsFromStorage();
-  }, [isModalOpen, loadModelPrefsFromStorage]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(STORAGE_CHAT_SELECTED_MODEL_KEY, String(selectedModel));
-  }, [selectedModel]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(STORAGE_CHAT_USE_RAG_KEY, useRagContext ? 'true' : 'false');
-  }, [useRagContext]);
-
-  useEffect(() => {
-    // Fetch OpenRouter pricing (best-effort)
-    const fetchPricing = async () => {
-      try {
-        const res = await authFetch('/api/models');
-        if (!res.ok) return;
-        const data = (await res.json()) as { models?: Array<{ id: string; pricing: ModelPricing }> };
-        const map: ModelPricingMap = {};
-        for (const m of data.models || []) {
-          map[m.id] = m.pricing;
-        }
-        setModelPricing(map);
-      } catch {
-        // ignore
-      }
+  const loadChatState = useCallback(async () => {
+    const res = await authFetch('/api/chat/conversations');
+    if (!res.ok) return;
+    const data = (await res.json()) as {
+      conversations?: ChatConversation[];
+      current?: ConversationPayload | null;
+      settings?: ChatSettings;
     };
-    void fetchPricing();
+    setHistory(Array.isArray(data.conversations) ? data.conversations : []);
+    setCurrent(data.current ?? null);
+    setSettings(data.settings ?? null);
+  }, []);
+
+  const loadAll = useCallback(async () => {
+    setError(null);
+    await Promise.all([loadModels(), loadChatState()]);
+  }, [loadModels, loadChatState]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    void loadAll();
+  }, [isOpen, loadAll]);
+
+  const lockDocumentScroll = useCallback(() => {
+    if (typeof document === 'undefined') return;
+    if (bodyOverflowRef.current === null) {
+      bodyOverflowRef.current = document.body.style.overflow;
+      bodyOverscrollRef.current = document.body.style.overscrollBehavior;
+    }
+    document.body.style.overflow = 'hidden';
+    document.body.style.overscrollBehavior = 'contain';
+  }, []);
+
+  const unlockDocumentScroll = useCallback(() => {
+    if (typeof document === 'undefined') return;
+    if (bodyOverflowRef.current === null) return;
+    document.body.style.overflow = bodyOverflowRef.current;
+    document.body.style.overscrollBehavior = bodyOverscrollRef.current ?? '';
+    bodyOverflowRef.current = null;
+    bodyOverscrollRef.current = null;
   }, []);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (!isOpen) {
+      unlockDocumentScroll();
+      return;
     }
-  }, [messages, isSending]);
 
-  const closeModal = useCallback(() => {
-    setIsModalOpen(false);
-    setMessages([]);
-    setInput('');
+    const shouldLockForMobile = () => {
+      if (typeof window === 'undefined') return false;
+      return window.matchMedia('(max-width: 767px)').matches;
+    };
+
+    if (shouldLockForMobile()) lockDocumentScroll();
+
+    return () => {
+      unlockDocumentScroll();
+    };
+  }, [isOpen, lockDocumentScroll, unlockDocumentScroll]);
+
+  useEffect(() => {
+    if (!isOpen || activeTab !== 'current') return;
+    const raf = window.requestAnimationFrame(() => {
+      if (currentScrollRef.current) {
+        currentScrollRef.current.scrollTop = currentScrollRef.current.scrollHeight;
+      }
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [activeTab, current?.conversation.id, current?.messages.length, isOpen, isSending]);
+
+  useEffect(() => {
+    if (openScrollRef.current) openScrollRef.current.scrollTop = openScrollRef.current.scrollHeight;
+  }, [openChat?.messages, isSending]);
+
+  const saveSettings = useCallback(async (next: Partial<ChatSettings>) => {
+    setSettingsDirty(true);
+    try {
+      const res = await authFetch('/api/chat/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(next),
+      });
+      const data = (await res.json().catch(() => ({}))) as ChatSettings | { error?: string };
+      if (!res.ok) throw new Error('error' in data ? data.error || 'Failed to save settings' : 'Failed to save settings');
+      setSettings(data as ChatSettings);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save settings');
+    } finally {
+      setSettingsDirty(false);
+    }
+  }, []);
+
+  const newChat = useCallback(async () => {
     setError(null);
-    setIsSending(false);
-  }, [setIsModalOpen]);
+    try {
+      const res = await authFetch('/api/chat/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = (await res.json()) as {
+        conversation?: ChatConversation;
+        messages?: ChatMessage[];
+        conversations?: ChatConversation[];
+        settings?: ChatSettings;
+        error?: string;
+      };
+      if (!res.ok || !data.conversation) throw new Error(data.error || 'Failed to create chat');
+      setCurrent({ conversation: data.conversation, messages: data.messages || [] });
+      setHistory(data.conversations || []);
+      setSettings(data.settings || null);
+      setInput('');
+      setActiveTab('current');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create chat');
+    }
+  }, []);
+
+  const loadConversation = useCallback(async (id: string) => {
+    setError(null);
+    try {
+      const res = await authFetch(`/api/chat/conversations?id=${encodeURIComponent(id)}`);
+      const data = (await res.json()) as ConversationPayload | { error?: string };
+      if (!res.ok || !('conversation' in data)) throw new Error('error' in data ? data.error || 'Failed to load chat' : 'Failed to load chat');
+      setOpenChat(data);
+      setOpenInput('');
+      setActiveTab('open');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load chat');
+    }
+  }, []);
+
+  const deleteConversation = useCallback(async (conversationId: string) => {
+    setError(null);
+    try {
+      const res = await authFetch(`/api/chat/conversations?id=${encodeURIComponent(conversationId)}`, {
+        method: 'DELETE',
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        conversations?: ChatConversation[];
+        current?: ConversationPayload | null;
+        settings?: ChatSettings;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error || 'Failed to delete chat');
+
+      setHistory(Array.isArray(data.conversations) ? data.conversations : []);
+      setCurrent(data.current ?? null);
+      setSettings(data.settings ?? null);
+
+      if (openChat?.conversation.id === conversationId) {
+        setOpenChat(null);
+        if (activeTab === 'open') setActiveTab('history');
+      }
+
+      if (current?.conversation.id === conversationId && activeTab === 'current') {
+        setActiveTab('current');
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete chat');
+    }
+  }, [activeTab, current?.conversation.id, openChat?.conversation.id]);
+
+  const updateConversationModel = useCallback(async (payload: ConversationPayload, modelId: string) => {
+    setError(null);
+    const nextPayload = { ...payload, conversation: { ...payload.conversation, modelId } };
+    if (payload.conversation.id === current?.conversation.id) setCurrent(nextPayload);
+    if (payload.conversation.id === openChat?.conversation.id) setOpenChat(nextPayload);
+
+    try {
+      const res = await authFetch('/api/chat/conversations', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: payload.conversation.id, modelId }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        conversation?: ChatConversation;
+        messages?: ChatMessage[];
+        conversations?: ChatConversation[];
+        error?: string;
+      };
+      if (!res.ok || !data.conversation) throw new Error(data.error || 'Failed to update model');
+      const refreshed = { conversation: data.conversation, messages: data.messages || payload.messages };
+      if (payload.conversation.id === current?.conversation.id) setCurrent(refreshed);
+      if (payload.conversation.id === openChat?.conversation.id) setOpenChat(refreshed);
+      if (data.conversations) setHistory(data.conversations);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update model');
+    }
+  }, [current?.conversation.id, openChat?.conversation.id]);
 
   const sendMessage = useCallback(async () => {
-    const text = input.trim();
-    if (!text || isSending) return;
+    const payload = activePayload;
+    const text = activeInput.trim();
+    const outgoingAttachments = activeTab === 'open' ? openAttachments : attachments;
+    if (!payload || (!text && outgoingAttachments.length === 0) || isSending) return;
 
     setError(null);
     setIsSending(true);
-
-    const nextMessages: ChatMessage[] = [...messages, { role: 'user', content: text }];
-    setMessages(nextMessages);
-    setInput('');
+    if (activeTab === 'open') setOpenInput('');
+    else setInput('');
+    if (activeTab === 'open') setOpenAttachments([]);
+    else setAttachments([]);
 
     try {
       const res = await authFetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          modelId: selectedModel,
-          useRagContext,
-          embeddingModelId,
-          messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
+          conversationId: payload.conversation.id,
+          message: text,
+          modelId: payload.conversation.modelId,
+          systemPrompt: settings?.systemPrompt ?? payload.conversation.systemPrompt,
+          useRagContext: settings?.useRagContext === true,
+          attachments: outgoingAttachments,
         }),
       });
-
-      const data = (await res.json()) as
-        | { message?: { role: 'assistant'; content: string }; ragContext?: string | null; error?: string }
-        | { error: string };
-
-      if (!res.ok) {
-        throw new Error(('error' in data && data.error) || 'Failed to send message');
+      const data = (await res.json()) as {
+        userMessage?: ChatMessage;
+        message?: ChatMessage;
+        conversation?: ChatConversation;
+        error?: string;
+      };
+      if (!res.ok || !data.userMessage || !data.message || !data.conversation) {
+        throw new Error(data.error || 'Failed to send message');
       }
 
-      const assistant = 'message' in data ? data.message : undefined;
-      if (!assistant?.content) throw new Error('Empty response');
-
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: assistant.content, ragContext: 'ragContext' in data ? data.ragContext ?? null : null },
-      ]);
-    } catch (e: unknown) {
-      const msg = (typeof (e as { message?: unknown })?.message === 'string' && (e as { message: string }).message) || 'Failed to send message';
-      setError(msg);
+      const nextPayload = {
+        conversation: data.conversation,
+        messages: [...payload.messages, data.userMessage, data.message],
+      };
+      if (activeTab === 'open') setOpenChat(nextPayload);
+      else setCurrent(nextPayload);
+      await loadChatState();
+      await loadModels();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to send message');
+      if (activeTab === 'open') setOpenInput(text);
+      else setInput(text);
+      if (activeTab === 'open') setOpenAttachments(outgoingAttachments);
+      else setAttachments(outgoingAttachments);
     } finally {
       setIsSending(false);
-      inputRef.current?.focus();
     }
-  }, [input, isSending, messages, selectedModel, useRagContext, embeddingModelId]);
+  }, [activeInput, activePayload, activeTab, attachments, isSending, loadChatState, loadModels, openAttachments, settings?.systemPrompt, settings?.useRagContext]);
 
-  useEffect(() => {
-    if (!isModalOpen) return;
-    autoResizeInput();
-  }, [input, isModalOpen, autoResizeInput]);
+  const addModel = useCallback(async () => {
+    const id = newModelId.trim();
+    if (!id) return;
+    setError(null);
+    try {
+      const res = await authFetch('/api/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, name: id, description: 'Custom OpenRouter model' }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { models?: ModelConfig[]; error?: string };
+      if (!res.ok) throw new Error(data.error || 'Failed to add model');
+      if (Array.isArray(data.models)) setModels(data.models);
+      setNewModelId('');
+      await saveSettings({ selectedModelId: id });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to add model');
+    }
+  }, [newModelId, saveSettings]);
 
-  if (!isModalOpen) return null;
+  const modelOptions = useMemo(() => models.length ? models : [], [models]);
 
-  return (
-    <>
-      {/* Backdrop blur */}
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[200]" onClick={closeModal} />
-      
-      {/* Modal */}
-      <div className="fixed inset-0 z-[210] flex items-stretch md:items-center justify-center p-0 md:p-4">
-        <div className="relative bg-zinc-900 rounded-none md:rounded-2xl shadow-2xl border border-zinc-800 w-full md:max-w-3xl h-[100dvh] md:h-auto md:max-h-[80vh] flex flex-col overflow-hidden">
-          
-          {/* Close button */}
-          <button
-            onClick={closeModal}
-            className="absolute top-[calc(env(safe-area-inset-top)+0.75rem)] right-3 md:top-4 md:right-4 z-[220] p-2 rounded-full bg-zinc-800 hover:bg-zinc-700 transition-colors text-zinc-400 hover:text-white"
+  const deleteModel = useCallback(async (modelId: string) => {
+    if (models.length <= 1) {
+      setError('Cannot delete the last model.');
+      return;
+    }
+
+    setError(null);
+    try {
+      const res = await authFetch(`/api/models?id=${encodeURIComponent(modelId)}`, { method: 'DELETE' });
+      const data = (await res.json().catch(() => ({}))) as {
+        models?: ModelConfig[];
+        spend?: ModelSpend[];
+        fallbackModelId?: string;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error || 'Failed to delete model');
+
+      const nextModels = Array.isArray(data.models) ? data.models : [];
+      setModels(nextModels);
+      setModelSpend(Array.isArray(data.spend) ? data.spend : []);
+
+      const fallback = data.fallbackModelId || nextModels[0]?.id || '';
+      if (settings?.selectedModelId === modelId && fallback) {
+        setSettings(s => s ? { ...s, selectedModelId: fallback } : s);
+      }
+      if (current?.conversation.modelId === modelId && fallback) {
+        setCurrent(p => p ? { ...p, conversation: { ...p.conversation, modelId: fallback } } : p);
+      }
+      if (openChat?.conversation.modelId === modelId && fallback) {
+        setOpenChat(p => p ? { ...p, conversation: { ...p.conversation, modelId: fallback } } : p);
+      }
+      await loadChatState();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete model');
+    }
+  }, [current?.conversation.modelId, loadChatState, models.length, openChat?.conversation.modelId, settings?.selectedModelId]);
+
+  const stopDocumentScroll = useCallback((e: WheelEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+  }, []);
+
+  const modelLabel = useCallback((m: ModelConfig) => {
+    const p = modelPricing[m.id] ?? m.pricing;
+    const price = p ? `${formatCost(p.prompt)}/M in, ${formatCost(p.completion)}/M out` : '--/M';
+    const vision = m.supportsVision ? 'Vision' : 'Text';
+    return `${m.name} - ${price} - ${vision}`;
+  }, [modelPricing]);
+
+  const addActiveAttachments = useCallback((items: ChatAttachment[]) => {
+    if (activeTab === 'open') setOpenAttachments(prev => [...prev, ...items]);
+    else setAttachments(prev => [...prev, ...items]);
+  }, [activeTab]);
+
+  const removeActiveAttachment = useCallback((idx: number) => {
+    if (activeTab === 'open') setOpenAttachments(prev => prev.filter((_, i) => i !== idx));
+    else setAttachments(prev => prev.filter((_, i) => i !== idx));
+  }, [activeTab]);
+
+  const readFilesAsAttachments = useCallback(async (files: FileList | null) => {
+    if (!files?.length) return;
+    const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    const next = await Promise.all(imageFiles.map((file) => new Promise<ChatAttachment>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({
+        kind: 'upload',
+        mimeType: file.type,
+        dataUrl: String(reader.result || ''),
+        fileName: file.name,
+      });
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    })));
+    addActiveAttachments(next.filter((a) => a.dataUrl.startsWith('data:image/')));
+  }, [addActiveAttachments]);
+
+  const captureScreenshot = useCallback(async () => {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      setError('Screen capture is not supported in this browser.');
+      return;
+    }
+
+    setIsOpen(false);
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    let stream: MediaStream | null = null;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      await video.play();
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.min(video.videoWidth || window.innerWidth, window.innerWidth);
+      canvas.height = Math.min(video.videoHeight || window.innerHeight, window.innerHeight);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Could not capture screen');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      setPendingScreenshot({
+        kind: 'screenshot',
+        mimeType: 'image/png',
+        dataUrl: canvas.toDataURL('image/png'),
+        fileName: 'screen.png',
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Screen capture cancelled');
+    } finally {
+      stream?.getTracks().forEach((track) => track.stop());
+      setIsOpen(true);
+    }
+  }, [setIsOpen]);
+
+  const renderConversation = (payload: ConversationPayload | null, scrollRef: RefObject<HTMLDivElement | null>) => {
+    if (!payload) return <div className="p-4 text-sm text-zinc-500">No chat loaded.</div>;
+    return (
+      <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="border-b border-zinc-800 px-4 py-3">
+          <label className="mb-1 block text-xs text-zinc-500">Model for this chat</label>
+          <select
+            value={payload.conversation.modelId}
+            onChange={(e) => void updateConversationModel(payload, e.target.value)}
+            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-950/70 px-3 py-2 text-sm text-white shadow-inner focus:border-cyan-500/70 focus:outline-none"
           >
-            <X size={18} className="md:w-5 md:h-5" />
-          </button>
+            {modelOptions.map((m) => {
+              return <option key={m.id} value={m.id}>{modelLabel(m)}</option>;
+            })}
+          </select>
+        </div>
 
-          {/* Header */}
-          <div className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 md:px-6 md:py-4 border-b border-zinc-800 flex-shrink-0">
-            <h2 className="text-lg md:text-xl font-semibold text-white pr-10">Chat</h2>
-
-            <div className="mt-3 flex flex-col gap-3">
-              <div className="flex flex-col gap-3 md:flex-row md:items-end">
-                <div className="flex-1 min-w-0">
-                  <label className="block text-xs text-zinc-400 mb-1">Model</label>
-                  <select
-                    value={String(selectedModel)}
-                    onChange={(e) => setSelectedModel(e.target.value as ModelId)}
-                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-zinc-500"
-                  >
-                    {allModels.map((m) => {
-                      const p = modelPricing[m.id];
-                      const suffix = p ? ` (${formatCost(p.prompt)}/M in, ${formatCost(p.completion)}/M out)` : '';
-                      return (
-                        <option key={m.id} value={m.id}>
-                          {m.name}{suffix}
-                        </option>
-                      );
-                    })}
-                  </select>
+        <div ref={scrollRef} data-chat-scrollable="true" className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3 space-y-3">
+          {payload.messages.length === 0 && (
+            <div className="text-sm text-zinc-500">Start a conversation. It stays saved in data.db.</div>
+          )}
+          {payload.messages.map((m) => (
+            <div key={m.id} className={`flex flex-col gap-1 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
+              <div className="px-1 text-[10px] text-zinc-500">{m.role === 'user' ? 'You' : 'Assistant'}</div>
+              <div className={`max-w-[88%] whitespace-pre-wrap break-words rounded border px-3 py-2 text-sm ${
+                m.role === 'user'
+                  ? 'border-cyan-700/30 bg-cyan-950/50 text-cyan-50 shadow-sm'
+                  : 'border-fuchsia-700/25 bg-zinc-950/80 text-zinc-100 shadow-sm'
+              }`}>
+                {m.content}
+                {m.attachments && m.attachments.length > 0 && (
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    {m.attachments.map((a) => (
+                      <img
+                        key={a.id || a.dataUrl}
+                        src={a.dataUrl}
+                        alt={a.fileName || a.kind}
+                        className="max-h-36 w-full rounded-md border border-zinc-700/60 object-cover"
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+              {m.role === 'assistant' && m.ragContext && (
+                <div className="max-w-[88%] whitespace-pre-wrap break-words rounded border border-violet-900/40 bg-violet-950/20 px-3 py-2 text-[11px] text-violet-200">
+                  <div className="mb-1 text-zinc-400">Context used</div>
+                  {m.ragContext}
                 </div>
+              )}
+            </div>
+          ))}
+          {isSending && <div className="text-sm text-zinc-500">Assistant is typing...</div>}
+        </div>
 
-                <div className="flex items-center justify-between md:justify-start gap-2">
-                  <span className="text-xs text-zinc-400">RAG</span>
+        <div className="border-t border-zinc-800/80 bg-zinc-950/40 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3">
+          {activeAttachments.length > 0 && (
+            <div className="mb-3 flex gap-2 overflow-x-auto">
+              {activeAttachments.map((a, idx) => (
+                <div key={`${a.dataUrl}-${idx}`} className="relative h-16 w-16 shrink-0">
+                  <img src={a.dataUrl} alt={a.fileName || a.kind} className="h-16 w-16 rounded-lg border border-zinc-700 object-cover" />
                   <button
                     type="button"
-                    onClick={() => setUseRagContext((v) => !v)}
-                    className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${useRagContext ? 'bg-blue-600' : 'bg-zinc-700'}`}
-                    title={useRagContext ? 'RAG context enabled' : 'RAG context disabled'}
+                    onClick={() => removeActiveAttachment(idx)}
+                    className="absolute -right-1 -top-1 rounded-full bg-zinc-950 p-0.5 text-zinc-200 shadow"
+                    title="Remove image"
                   >
-                    <div
-                      className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${useRagContext ? 'translate-x-5' : 'translate-x-1'}`}
-                    />
+                    <X size={12} />
                   </button>
                 </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Error Display */}
-          {error && (
-            <div className="mx-4 mt-3 md:mx-6 md:mt-4 bg-red-900/20 border border-red-500/30 rounded-lg p-2 md:p-3 flex-shrink-0">
-              <p className="text-xs md:text-sm text-red-300">{error}</p>
+              ))}
             </div>
           )}
-
-          <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-            <div
-              ref={scrollRef}
-              className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 md:px-6 md:py-4 space-y-3"
-            >
-              {messages.length === 0 && (
-                <div className="text-sm text-zinc-500">Ask anything. Closing this popup clears the conversation.</div>
-              )}
-
-              {messages.map((m, idx) => (
-                <div key={idx} className={`flex flex-col gap-1 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-                  <div className="text-[10px] text-zinc-500 px-1">{m.role === 'user' ? 'You' : 'Assistant'}</div>
-                  <div
-                    className={`max-w-[90%] md:max-w-[85%] px-3 py-2 rounded-lg text-sm border whitespace-pre-wrap break-words ${
-                      m.role === 'user'
-                        ? 'bg-cyan-900/30 text-cyan-100 border-cyan-800/30'
-                        : 'bg-purple-900/30 text-purple-100 border-purple-800/30'
-                    }`}
-                  >
-                    {m.content}
-                  </div>
-                  {m.role === 'assistant' && m.ragContext && (
-                    <div className="max-w-[90%] md:max-w-[85%] px-3 py-2 rounded-lg text-[11px] border border-violet-900/40 bg-violet-950/20 text-violet-200">
-                      <div className="text-zinc-400 mb-1">Context used</div>
-                      <div className="whitespace-pre-wrap break-words">{m.ragContext}</div>
-                    </div>
-                  )}
-                </div>
-              ))}
-
-              {isSending && (
-                <div className="text-sm text-zinc-500">Assistant is typing…</div>
-              )}
-            </div>
-
-            <div className="border-t border-zinc-800 px-3 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] md:p-4">
-              <div className="flex gap-2">
-                <textarea
-                  ref={inputRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      void sendMessage();
-                    }
+          <div className="flex gap-2">
+            <textarea
+              value={activeTab === 'open' ? openInput : input}
+              onChange={(e) => activeTab === 'open' ? setOpenInput(e.target.value) : setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  void sendMessage();
+                }
+              }}
+              rows={1}
+              className="max-h-36 flex-1 resize-none rounded-xl border border-zinc-700 bg-zinc-900/90 px-3 py-2 text-sm leading-5 text-white shadow-inner focus:border-cyan-500/70 focus:outline-none"
+              placeholder={activeSupportsVision ? 'Type a message, attach images, or send just an image...' : 'Type a message...'}
+              disabled={isSending}
+            />
+            {activeSupportsVision && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    void readFilesAsAttachments(e.target.files);
+                    e.currentTarget.value = '';
                   }}
-                  rows={1}
-                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-zinc-500 resize-none leading-5"
-                  placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
-                  disabled={isSending}
                 />
                 <button
                   type="button"
-                  onClick={() => { void sendMessage(); }}
-                  disabled={isSending || !input.trim()}
-                  className="px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white transition-colors"
-                  title="Send"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-200 transition-colors hover:bg-zinc-800"
+                  title="Attach images"
                 >
-                  <Send size={18} />
+                  <ImageIcon size={18} />
                 </button>
-              </div>
-              <div className="mt-2 text-xs text-zinc-500">
-                {useRagContext ? 'RAG is enabled: each user message pulls relevant context.' : 'RAG is disabled.'}
-              </div>
-            </div>
+                <button
+                  type="button"
+                  onClick={() => void captureScreenshot()}
+                  className="rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-200 transition-colors hover:bg-zinc-800"
+                  title="Capture screen"
+                >
+                  <Camera size={18} />
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => void sendMessage()}
+              disabled={isSending || (!activeInput.trim() && activeAttachments.length === 0)}
+              className="rounded-xl bg-cyan-600 px-3 py-2 text-white shadow-lg shadow-cyan-950/40 transition-colors hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:shadow-none"
+              title="Send"
+            >
+              <Send size={18} />
+            </button>
+          </div>
+          <div className="mt-2 text-xs text-zinc-500">
+            RAG is {settings?.useRagContext ? 'enabled' : 'disabled'} for outgoing messages.
           </div>
         </div>
       </div>
+    );
+  };
+
+  return (
+    <>
+    <div
+      className={`fixed right-0 top-0 z-[70] h-full border-l border-zinc-800/80 bg-zinc-950/95 shadow-2xl shadow-black/40 backdrop-blur-xl transition-transform duration-300 ease-in-out ${
+        isOpen ? 'translate-x-0' : 'translate-x-full'
+      } w-full max-w-[30rem] max-sm:max-w-full overscroll-contain`}
+      onWheel={stopDocumentScroll}
+      onTouchMove={(e) => e.stopPropagation()}
+      onMouseEnter={lockDocumentScroll}
+      onMouseLeave={unlockDocumentScroll}
+    >
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="border-b border-zinc-800/80 bg-gradient-to-b from-zinc-900/90 to-zinc-950/90 px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] md:pt-8">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2 text-zinc-200">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-500/20 bg-cyan-500/10 text-cyan-200">
+                <MessageSquarePlus size={18} />
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-zinc-100">Chat</div>
+                <div className="truncate text-[11px] text-zinc-500">Saved conversations, models, and spend</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void newChat()}
+                className="rounded-xl border border-zinc-700/80 bg-zinc-900/90 p-2 text-zinc-200 shadow-sm transition-colors hover:border-cyan-700/60 hover:bg-zinc-800"
+                title="New chat"
+              >
+                <Plus size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                className="rounded-xl border border-zinc-700/80 bg-zinc-900/90 p-2 text-zinc-200 shadow-sm transition-colors hover:border-zinc-600 hover:bg-zinc-800"
+                title="Close chat panel"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex gap-1 overflow-x-auto pb-0">
+            {[
+              ['current', 'Current chat'],
+              ['history', 'History'],
+              ['settings', 'Settings'],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setActiveTab(id as ActiveTab)}
+                className={`shrink-0 rounded-t-xl border-x border-t px-3 py-2 text-xs transition-colors ${
+                  activeTab === id
+                    ? 'border-zinc-700 bg-zinc-950 text-white shadow-inner'
+                    : 'border-transparent text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            {openChat && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('open')}
+                className={`flex min-w-0 shrink-0 items-center gap-2 rounded-t-xl border-x border-t px-3 py-2 text-xs transition-colors ${
+                  activeTab === 'open'
+                    ? 'border-zinc-700 bg-zinc-950 text-white'
+                    : 'border-transparent text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
+                }`}
+                title={openChat.conversation.title}
+              >
+                <span className="max-w-32 truncate">{openChat.conversation.title}</span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpenChat(null);
+                    if (activeTab === 'open') setActiveTab('history');
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setOpenChat(null);
+                      if (activeTab === 'open') setActiveTab('history');
+                    }
+                  }}
+                  className="rounded p-0.5 hover:bg-zinc-800"
+                >
+                  <X size={12} />
+                </span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {error && (
+          <div className="mx-4 mt-3 rounded border border-red-500/30 bg-red-900/20 p-2 text-xs text-red-300">
+            {error}
+          </div>
+        )}
+
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {activeTab === 'current' && renderConversation(current, currentScrollRef)}
+          {activeTab === 'open' && renderConversation(openChat, openScrollRef)}
+
+          {activeTab === 'history' && (
+            <div data-chat-scrollable="true" className="h-full overflow-y-auto overscroll-contain p-4">
+              <div className="flex flex-col gap-2">
+                {history.length === 0 && <div className="text-sm text-zinc-500">No saved chats yet.</div>}
+                {history.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-950 px-3 py-2 transition-colors hover:border-zinc-700 hover:bg-zinc-900"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => void loadConversation(c.id)}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <div className="truncate text-sm text-zinc-200">{c.title}</div>
+                      <div className="mt-1 flex items-center justify-between gap-3 text-xs text-zinc-500">
+                        <span className="truncate">{c.modelId}</span>
+                        <span>{c.messageCount ?? 0} msgs</span>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm(`Delete chat \"${c.title}\"? This removes its messages and attached images.`)) {
+                          void deleteConversation(c.id);
+                        }
+                      }}
+                      className="shrink-0 rounded-md p-2 text-zinc-500 transition-colors hover:bg-red-950/40 hover:text-red-300"
+                      title={`Delete ${c.title}`}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'settings' && (
+            <div data-chat-scrollable="true" className="h-full overflow-y-auto overscroll-contain p-4">
+              <div className="flex flex-col gap-5">
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-500">Default model for new chats</label>
+                  <select
+                    value={settings?.selectedModelId || ''}
+                    onChange={(e) => {
+                      const selectedModelId = e.target.value;
+                      setSettings(s => s ? { ...s, selectedModelId } : s);
+                      void saveSettings({ selectedModelId });
+                    }}
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white focus:border-cyan-500/70 focus:outline-none"
+                  >
+                    {modelOptions.map((m) => (
+                      <option key={m.id} value={m.id}>{modelLabel(m)}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-500">Add OpenRouter model</label>
+                  <div className="flex gap-2">
+                    <input
+                      value={newModelId}
+                      onChange={(e) => setNewModelId(e.target.value)}
+                      className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-zinc-500 focus:outline-none"
+                      placeholder="provider/model-id"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void addModel()}
+                      disabled={!newModelId.trim()}
+                      className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-700"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-3">
+                  <div className="mb-3 flex items-center gap-2 text-sm text-zinc-300">
+                    <DollarSign size={15} />
+                    OpenRouter spend
+                  </div>
+                  {modelSpend.length === 0 ? (
+                    <div className="text-xs text-zinc-500">No tracked spend yet. New chat responses will add usage here when OpenRouter returns token usage.</div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {modelSpend.map((s) => (
+                        <div key={s.modelId} className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="truncate text-xs text-zinc-300">{s.modelId}</span>
+                            <span className="text-xs font-semibold text-emerald-300">${Number(s.totalCost || 0).toFixed(6)}</span>
+                          </div>
+                          <div className="mt-1 text-[11px] text-zinc-500">
+                            {Number(s.promptTokens || 0).toLocaleString()} in / {Number(s.completionTokens || 0).toLocaleString()} out
+                            {s.imageCost ? ` / $${Number(s.imageCost).toFixed(6)} images` : ''}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-500">System prompt</label>
+                  <textarea
+                    value={settings?.systemPrompt || ''}
+                    onChange={(e) => {
+                      const systemPrompt = e.target.value;
+                      setSettings(s => s ? { ...s, systemPrompt } : s);
+                      void saveSettings({ systemPrompt });
+                    }}
+                    rows={8}
+                    className="w-full resize-none rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-zinc-500 focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded border border-zinc-800 bg-zinc-950 px-3 py-2">
+                  <div>
+                    <div className="text-sm text-zinc-300">Use RAG context</div>
+                    <div className="text-xs text-zinc-500">Off by default. Stored in data.db.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const useRagContext = !(settings?.useRagContext ?? false);
+                      setSettings(s => s ? { ...s, useRagContext } : s);
+                      void saveSettings({ useRagContext });
+                    }}
+                    className={`h-6 w-10 rounded-full transition-colors ${settings?.useRagContext ? 'bg-blue-600' : 'bg-zinc-700'}`}
+                    title={settings?.useRagContext ? 'RAG enabled' : 'RAG disabled'}
+                  >
+                    <div className={`h-4 w-4 rounded-full bg-white shadow-md transition-transform ${settings?.useRagContext ? 'translate-x-5' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-3">
+                  <div className="mb-2 text-sm text-zinc-300">Model capabilities</div>
+                  <div data-chat-scrollable="true" className="flex max-h-52 flex-col gap-1 overflow-y-auto overscroll-contain">
+                    {modelOptions.map((m) => (
+                      <div key={m.id} className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-xs text-zinc-400 hover:bg-zinc-900/70">
+                        <span className="min-w-0 flex-1 truncate" title={m.id}>{m.name}</span>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${m.supportsVision ? 'bg-cyan-500/10 text-cyan-200' : 'bg-zinc-800 text-zinc-500'}`}>
+                            {m.supportsVision ? <Eye size={12} /> : <EyeOff size={12} />}
+                            {m.supportsVision ? 'Vision' : 'Text'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void deleteModel(m.id)}
+                            disabled={modelOptions.length <= 1}
+                            className="rounded-md p-1 text-zinc-500 transition-colors hover:bg-red-950/40 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-30"
+                            title={modelOptions.length <= 1 ? 'Cannot delete the last model' : `Delete ${m.name}`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="text-xs text-zinc-500">
+                  {settingsDirty ? 'Saving settings...' : 'Settings are saved to data.db.'}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+    {pendingScreenshot && (
+      <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+        <div className="w-full max-w-3xl overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 shadow-2xl">
+          <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+            <div className="text-sm font-medium text-zinc-100">Use this screenshot?</div>
+            <button
+              type="button"
+              onClick={() => setPendingScreenshot(null)}
+              className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="max-h-[70vh] overflow-auto p-3">
+            <img src={pendingScreenshot.dataUrl} alt="Captured screen" className="w-full rounded-xl border border-zinc-800" />
+          </div>
+          <div className="flex justify-end gap-2 border-t border-zinc-800 px-4 py-3">
+            <button
+              type="button"
+              onClick={() => setPendingScreenshot(null)}
+              className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-900"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                addActiveAttachments([pendingScreenshot]);
+                setPendingScreenshot(null);
+              }}
+              className="rounded-lg bg-cyan-600 px-3 py-2 text-sm text-white hover:bg-cyan-500"
+            >
+              Attach
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   );
 }

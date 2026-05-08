@@ -9,8 +9,9 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { debounce } from 'lodash';
 import { ChevronRight, ChevronLeft, Bold, Strikethrough, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, MessageSquare, Play, Pause, SkipBack, SkipForward, Database, Plus, Minus, BookOpen, Tag } from 'lucide-react';
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
-import { AVAILABLE_MODELS, DEFAULT_MODEL, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
+import { DEFAULT_MODEL, ModelConfig, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
 import { CompletionMark } from '@/lib/completion-mark';
 import { SavedCompletion } from '@/lib/saved-completion';
 import { Bookmark } from '@/lib/bookmark';
@@ -34,9 +35,19 @@ const DEFAULT_REGEN_PROMPT_TEMPLATE = `This is the already generated text:
 
 Now generate a drastically  different path to the completion for the next attempt, very far deferent from the ones that are shown in the attempts above.
 {{ORIGINAL_PROMPT}}`;
-
-const STORAGE_SELECTED_MODEL_KEY = 'helm.selectedModel';
-const STORAGE_CUSTOM_MODELS_KEY = 'helm.customModels';
+const DEFAULT_FOCUS_PROMPT = 'If I had to change the color of one or more words in this text so later I just see that colored word and I know what phrase is about, what should I color?';
+const FOCUS_COLORS = [
+  { color: '#facc15', label: 'Yellow' },
+  { color: '#4ade80', label: 'Green' },
+  { color: '#60a5fa', label: 'Blue' },
+  { color: '#f472b6', label: 'Pink' },
+  { color: '#fb923c', label: 'Orange' },
+  { color: '#a78bfa', label: 'Purple' },
+];
+const DEFAULT_FOCUS_COLOR_RULES: Record<string, string> = {
+  '#facc15': 'the What',
+  '#4ade80': 'the where',
+};
 
 const SILENT_WAV_DATA_URL =
   'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==';
@@ -79,22 +90,45 @@ interface AutocompleteRequestPreview {
   messages: Array<{ role: 'system' | 'user'; content: string }>;
 }
 
+interface FocusHighlight {
+  text: string;
+  color: string;
+}
+
+interface FocusTextNode {
+  text: string;
+  from: number;
+  to: number;
+  colors: string[];
+}
+
+interface FocusTextContext {
+  text: string;
+  flatStart: number;
+  flatEnd: number;
+  textNodes: FocusTextNode[];
+}
+
 const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
   const setIsModalOpen = useVoiceStore(s => s.setIsModalOpen);
   const isChatModalOpen = useVoiceStore(s => s.isModalOpen);
   const [selectedModel, setSelectedModel] = useState<ModelId>(DEFAULT_MODEL);
-  const [customModelIds, setCustomModelIds] = useState<string[]>([]);
-  const [hasLoadedModelPrefs, setHasLoadedModelPrefs] = useState(false);
+  const [allModels, setAllModels] = useState<ModelConfig[]>([]);
   const [isAddModelOpen, setIsAddModelOpen] = useState(false);
   const [newModelId, setNewModelId] = useState('');
   const [newModelError, setNewModelError] = useState<string | null>(null);
   const newModelInputRef = useRef<HTMLInputElement | null>(null);
   const [isAutoCompleting, setIsAutoCompleting] = useState(false);
+  const [isFocusHighlighting, setIsFocusHighlighting] = useState(false);
   const [autoCompleteError, setAutoCompleteError] = useState<string | null>(null);
+  const [focusHighlightError, setFocusHighlightError] = useState<string | null>(null);
   const [customPrompt, setCustomPrompt] = useState(DEFAULT_PROMPT);
   const [regenPromptTemplate, setRegenPromptTemplate] = useState(DEFAULT_REGEN_PROMPT_TEMPLATE);
+  const [focusPrompt, setFocusPrompt] = useState(DEFAULT_FOCUS_PROMPT);
+  const [focusColorRules, setFocusColorRules] = useState<Record<string, string>>(DEFAULT_FOCUS_COLOR_RULES);
+  const [selectedFocusColor, setSelectedFocusColor] = useState(FOCUS_COLORS[0].color);
   const [attemptHistory, setAttemptHistory] = useState<AttemptHistory>({ attempts: [] });
   const [completion, setCompletion] = useState<CompletionState>({
     isActive: false,
@@ -209,22 +243,6 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   // Track if component is mounted (for portal SSR safety)
   const [isMounted, setIsMounted] = useState(false);
 
-  const allModels = useMemo(() => {
-    const builtIn = AVAILABLE_MODELS;
-    const builtInIds = new Set(builtIn.map(m => m.id));
-    const custom = customModelIds
-      .map(s => s.trim())
-      .filter(Boolean)
-      .filter(id => !builtInIds.has(id as ModelId))
-      .map((id) => ({
-        id: id as ModelId,
-        name: id,
-        description: 'Custom OpenRouter model',
-      }));
-
-    return [...builtIn, ...custom];
-  }, [customModelIds]);
-
   // Detect mobile viewport
   useEffect(() => {
     const checkMobile = () => {
@@ -240,59 +258,6 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     setIsMounted(true);
   }, []);
 
-  // Load model preferences (selected model + custom models) from localStorage
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    let initialCustom: string[] = [];
-    const rawCustom = window.localStorage.getItem(STORAGE_CUSTOM_MODELS_KEY);
-    if (rawCustom) {
-      try {
-        const parsed: unknown = JSON.parse(rawCustom);
-        if (Array.isArray(parsed)) {
-          initialCustom = parsed
-            .filter((v): v is string => typeof v === 'string')
-            .map(s => s.trim())
-            .filter(Boolean);
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    const rawSelected = window.localStorage.getItem(STORAGE_SELECTED_MODEL_KEY);
-    const selected = rawSelected?.trim();
-    if (selected) {
-      setSelectedModel(selected as ModelId);
-      const isBuiltIn = AVAILABLE_MODELS.some(m => m.id === (selected as ModelId));
-      if (!isBuiltIn && !initialCustom.includes(selected)) {
-        initialCustom = [...initialCustom, selected];
-      }
-    }
-
-    // Dedupe while preserving order
-    const seen = new Set<string>();
-    const deduped = initialCustom.filter((id) => {
-      if (seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    });
-    setCustomModelIds(deduped);
-    setHasLoadedModelPrefs(true);
-  }, []);
-
-  // Persist selected model
-  useEffect(() => {
-    if (!hasLoadedModelPrefs || typeof window === 'undefined') return;
-    window.localStorage.setItem(STORAGE_SELECTED_MODEL_KEY, String(selectedModel));
-  }, [selectedModel, hasLoadedModelPrefs]);
-
-  // Persist custom models
-  useEffect(() => {
-    if (!hasLoadedModelPrefs || typeof window === 'undefined') return;
-    window.localStorage.setItem(STORAGE_CUSTOM_MODELS_KEY, JSON.stringify(customModelIds));
-  }, [customModelIds, hasLoadedModelPrefs]);
-
   useEffect(() => {
     if (!isAddModelOpen) return;
     setNewModelError(null);
@@ -300,26 +265,44 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     return () => window.clearTimeout(t);
   }, [isAddModelOpen]);
 
-  const addOpenRouterModel = useCallback(() => {
+  const selectEditorModel = useCallback((id: ModelId) => {
+    setSelectedModel(id);
+    void authFetch('/api/editor-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selectedModelId: id }),
+    }).catch(() => {
+      // ignore
+    });
+  }, []);
+
+  const addOpenRouterModel = useCallback(async () => {
     const id = newModelId.trim();
     if (!id) {
       setNewModelError('Model id is required');
       return;
     }
 
-    const isBuiltIn = AVAILABLE_MODELS.some(m => m.id === (id as ModelId));
-    if (!isBuiltIn) {
-      setCustomModelIds(prev => {
-        if (prev.includes(id)) return prev;
-        return [...prev, id];
+    try {
+      const response = await authFetch('/api/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, name: id, description: 'Custom OpenRouter model' }),
       });
+      const data = (await response.json().catch(() => ({}))) as { models?: ModelConfig[]; error?: string };
+      if (!response.ok) {
+        setNewModelError(data.error || 'Failed to add model');
+        return;
+      }
+      if (Array.isArray(data.models)) setAllModels(data.models);
+      selectEditorModel(id);
+      setIsAddModelOpen(false);
+      setNewModelId('');
+      setNewModelError(null);
+    } catch (e) {
+      setNewModelError(e instanceof Error ? e.message : 'Failed to add model');
     }
-
-    setSelectedModel(id as ModelId);
-    setIsAddModelOpen(false);
-    setNewModelId('');
-    setNewModelError(null);
-  }, [newModelId]);
+  }, [newModelId, selectEditorModel]);
 
   // Handle Visual Viewport updates for sticky positioning
   useEffect(() => {
@@ -332,30 +315,23 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       // This handles the case where the layout viewport scrolls or the keyboard
       // pushes content but we want these controls to stay "sticky" to the glass
       const topOffset = viewport.offsetTop;
-      
-      // Base top position (e.g., 32px or 2rem)
-      const baseTop = 32; 
-      
-      // Update Sidebar Toggles
+      const baseTop = 32;
+
       if (leftToggleRef.current) {
         leftToggleRef.current.style.top = `${topOffset + baseTop}px`;
       }
-      
+
       if (rightToggleRef.current) {
         rightToggleRef.current.style.top = `${topOffset + baseTop}px`;
       }
 
       // Update Status Indicator (Completion Bar)
-      // Position it at the top as well, aligned with toggles but centered
       if (statusIndicatorRef.current) {
         statusIndicatorRef.current.style.top = `${topOffset + 16}px`;
       }
-      
-      // Update FAB Container - Position it on the right, below the sidebar toggle
-      // Sidebar toggle is ~40px height + 32px top = ~72px. Let's put FAB at ~80px top
+
       if (fabContainerRef.current) {
         // For the FAB, we want it top-aligned now, not bottom-aligned
-        // It should be below the right sidebar toggle
         const fabTop = topOffset + 80; // 80px from top of visual viewport
         fabContainerRef.current.style.top = `${fabTop}px`;
         // Reset bottom to auto to override any previous styles if switching modes
@@ -381,15 +357,13 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       const viewport = window.visualViewport;
       const topOffset = viewport.offsetTop;
       const baseTop = 32;
-      
       if (leftToggleRef.current) {
         leftToggleRef.current.style.top = `${topOffset + baseTop}px`;
       }
-      
+
       if (rightToggleRef.current) {
         rightToggleRef.current.style.top = `${topOffset + baseTop}px`;
       }
-
       if (statusIndicatorRef.current) {
         statusIndicatorRef.current.style.top = `${topOffset + 16}px`;
       }
@@ -514,20 +488,20 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     }
   }, []);
 
-  // Fetch model pricing from OpenRouter
-  const fetchModelPricing = useCallback(async () => {
+  const fetchModels = useCallback(async () => {
     try {
       const response = await authFetch('/api/models');
       if (response.ok) {
-        const data = await response.json();
+        const data = (await response.json()) as { models?: ModelConfig[] };
+        if (Array.isArray(data.models)) setAllModels(data.models);
         const pricingMap: ModelPricingMap = {};
         for (const model of data.models || []) {
-          pricingMap[model.id] = model.pricing;
+          if (model.pricing) pricingMap[model.id] = model.pricing;
         }
         setModelPricing(pricingMap);
       }
     } catch (error) {
-      console.error('Failed to fetch model pricing:', error);
+      console.error('Failed to fetch models:', error);
     }
   }, []);
 
@@ -539,6 +513,21 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         const data = await response.json();
         setCustomPrompt(data.customPrompt);
         setRegenPromptTemplate(data.regenPromptTemplate);
+        if (typeof data.focusPrompt === 'string') {
+          setFocusPrompt(data.focusPrompt);
+        }
+        if (typeof data.focusColorRules === 'string') {
+          try {
+            const parsed = JSON.parse(data.focusColorRules) as Record<string, unknown>;
+            const nextRules = { ...DEFAULT_FOCUS_COLOR_RULES };
+            for (const { color } of FOCUS_COLORS) {
+              if (typeof parsed[color] === 'string') nextRules[color] = parsed[color] as string;
+            }
+            setFocusColorRules(nextRules);
+          } catch {
+            setFocusColorRules(DEFAULT_FOCUS_COLOR_RULES);
+          }
+        }
       }
     } catch (error) {
       console.error('Failed to fetch prompts:', error);
@@ -551,7 +540,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     try {
       const response = await authFetch('/api/editor-settings');
       if (!response.ok) return;
-      const data = (await response.json()) as { useRagContext?: unknown; completionAudio?: unknown };
+      const data = (await response.json()) as { useRagContext?: unknown; completionAudio?: unknown; selectedModelId?: unknown };
 
       if (typeof data.useRagContext === 'boolean') {
         useRagContextRef.current = data.useRagContext;
@@ -561,18 +550,27 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       if (typeof data.completionAudio === 'boolean') {
         setAutoGenerateTts(data.completionAudio);
       }
+
+      if (typeof data.selectedModelId === 'string' && data.selectedModelId.trim()) {
+        setSelectedModel(data.selectedModelId.trim());
+      }
     } catch {
       // ignore
     }
   }, []);
 
   const savePrompts = useMemo(() => {
-    return debounce(async (prompt: string, regenTemplate: string) => {
+    return debounce(async (prompt: string, regenTemplate: string, nextFocusPrompt: string, nextFocusColorRules: Record<string, string>) => {
       try {
         await authFetch('/api/prompts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ customPrompt: prompt, regenPromptTemplate: regenTemplate }),
+          body: JSON.stringify({
+            customPrompt: prompt,
+            regenPromptTemplate: regenTemplate,
+            focusPrompt: nextFocusPrompt,
+            focusColorRules: JSON.stringify(nextFocusColorRules),
+          }),
         });
       } catch (error) {
         console.error('Failed to save prompts:', error);
@@ -917,12 +915,12 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   useEffect(() => {
     fetchBalance();
     fetchGroqBalance();
-    fetchModelPricing();
+    fetchModels();
     fetchPrompts();
     fetchEditorSettings();
     fetchRagStatus();
     fetchRagTopK();
-  }, [fetchBalance, fetchGroqBalance, fetchModelPricing, fetchPrompts, fetchEditorSettings, fetchRagStatus, fetchRagTopK]);
+  }, [fetchBalance, fetchGroqBalance, fetchModels, fetchPrompts, fetchEditorSettings, fetchRagStatus, fetchRagTopK]);
 
   // Load selected embedding model from localStorage
   useEffect(() => {
@@ -962,9 +960,9 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   // Save prompts when they change (after initial load)
   useEffect(() => {
     if (promptsLoaded) {
-      savePrompts(customPrompt, regenPromptTemplate);
+      savePrompts(customPrompt, regenPromptTemplate, focusPrompt, focusColorRules);
     }
-  }, [customPrompt, regenPromptTemplate, promptsLoaded, savePrompts]);
+  }, [customPrompt, regenPromptTemplate, focusPrompt, focusColorRules, promptsLoaded, savePrompts]);
 
   // Build regeneration prompt from template
   const buildRegenPrompt = useCallback((attempts: string[]) => {
@@ -1009,6 +1007,118 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     return textForCompletion;
   }, [editor]);
 
+  const getFocusTextContext = useCallback((): FocusTextContext | null => {
+    if (!editor) return null;
+
+    const cursorPos = editor.state.selection.anchor;
+    const text = getTextForCompletion();
+    if (!text || text === 'Begin') return null;
+
+    const textUpToCursor = editor.state.doc.textBetween(0, cursorPos, '\n', '\n').trimEnd();
+    if (!textUpToCursor.includes(text)) return null;
+
+    const textNodes: FocusTextNode[] = [];
+    editor.state.doc.descendants((node: ProseMirrorNode, pos: number) => {
+      if (!node.isText || !node.text) return true;
+      if (pos >= cursorPos) return false;
+      const clippedText = node.text.slice(0, Math.max(0, Math.min(node.text.length, cursorPos - pos)));
+      if (clippedText) {
+        const colors = node.marks
+          .map(mark => mark.type.name === 'textStyle' && typeof mark.attrs.color === 'string' ? mark.attrs.color.toLowerCase() : null)
+          .filter((color): color is string => color !== null);
+        textNodes.push({ text: clippedText, from: pos, to: pos + clippedText.length, colors });
+      }
+      return true;
+    });
+
+    const flatText = textNodes.map(node => node.text).join('');
+    const flatStart = flatText.lastIndexOf(text);
+    if (flatStart < 0) return null;
+
+    return {
+      text,
+      flatStart,
+      flatEnd: flatStart + text.length,
+      textNodes,
+    };
+  }, [editor, getTextForCompletion]);
+
+  const mapFocusContextRangeToDocRanges = useCallback((context: FocusTextContext, fromOffset: number, toOffset: number) => {
+    const ranges: Array<{ from: number; to: number }> = [];
+    let cursor = 0;
+    for (const node of context.textNodes) {
+      const nodeStart = cursor;
+      const nodeEnd = cursor + node.text.length;
+      cursor = nodeEnd;
+      if (nodeEnd <= fromOffset || nodeStart >= toOffset) continue;
+      const from = node.from + Math.max(0, fromOffset - nodeStart);
+      const to = node.from + Math.min(node.text.length, toOffset - nodeStart);
+      if (from < to) ranges.push({ from, to });
+    }
+    return ranges;
+  }, []);
+
+  const hasFocusTextColor = useCallback((context: FocusTextContext) => {
+    let cursor = 0;
+    for (const node of context.textNodes) {
+      const nodeStart = cursor;
+      const nodeEnd = cursor + node.text.length;
+      cursor = nodeEnd;
+      if (nodeEnd <= context.flatStart || nodeStart >= context.flatEnd) continue;
+      if (node.colors.length > 0) return true;
+    }
+    return false;
+  }, []);
+
+  const clearFocusTextColor = useCallback((context: FocusTextContext) => {
+    if (!editor) return 0;
+    const ranges = mapFocusContextRangeToDocRanges(context, context.flatStart, context.flatEnd);
+    if (ranges.length === 0) return 0;
+
+    const originalSelection = editor.state.selection;
+    let chain = editor.chain().focus();
+    for (const range of ranges) {
+      chain = chain.setTextSelection({ from: range.from, to: range.to }).unsetColor();
+    }
+    chain.setTextSelection(originalSelection.from).run();
+    return ranges.length;
+  }, [editor, mapFocusContextRangeToDocRanges]);
+
+  const applyFocusHighlights = useCallback((highlights: FocusHighlight[]) => {
+    const context = getFocusTextContext();
+    if (!editor || !context || highlights.length === 0) return 0;
+
+    const ranges: Array<{ from: number; to: number; color: string }> = [];
+    const flatText = context.textNodes.map(node => node.text).join('');
+
+    for (const highlight of highlights) {
+      const phrase = highlight.text.trim();
+      if (!phrase) continue;
+      let searchFrom = context.flatStart;
+      while (searchFrom < context.flatEnd) {
+        const index = flatText.indexOf(phrase, searchFrom);
+        if (index < 0 || index >= context.flatEnd) break;
+        const end = index + phrase.length;
+        if (end <= context.flatEnd) {
+          for (const range of mapFocusContextRangeToDocRanges(context, index, end)) {
+            ranges.push({ ...range, color: highlight.color });
+          }
+        }
+        searchFrom = end;
+      }
+    }
+
+    if (ranges.length === 0) return 0;
+
+    const originalSelection = editor.state.selection;
+    let chain = editor.chain().focus();
+    for (const range of ranges) {
+      chain = chain.setTextSelection({ from: range.from, to: range.to }).setColor(range.color);
+    }
+    chain.setTextSelection(originalSelection.from).run();
+    return ranges.length;
+  }, [editor, getFocusTextContext, mapFocusContextRangeToDocRanges]);
+
   // Loader position state
   const [loaderPosition, setLoaderPosition] = useState<{ top: number; left: number } | null>(null);
 
@@ -1024,8 +1134,92 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     };
   }, [editor]);
 
+  const handleFocusHighlight = useCallback(async () => {
+    if (!editor || isAutoCompleting || isFocusHighlighting) return;
+    if (completion.isActive) {
+      setFocusHighlightError('Confirm or cancel the active completion first.');
+      return;
+    }
+
+    const context = getFocusTextContext();
+    if (!context) {
+      setFocusHighlightError('No current phrase to color.');
+      return;
+    }
+
+    editor.commands.focus();
+    setLastRequestPreview(null);
+    setFocusHighlightError(null);
+
+    if (hasFocusTextColor(context)) {
+      clearFocusTextColor(context);
+      return;
+    }
+
+    setIsFocusHighlighting(true);
+    setLoaderPosition(getCursorCoords());
+    abortControllerRef.current = new AbortController();
+
+    try {
+      const colorRules = FOCUS_COLORS
+        .map(({ color }) => ({ color, meaning: (focusColorRules[color] || '').trim() }))
+        .filter(rule => rule.meaning.length > 0);
+
+      const response = await authFetch('/api/focus-highlight', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: context.text,
+          modelId: selectedModel,
+          prompt: focusPrompt,
+          colorRules,
+        }),
+        signal: abortControllerRef.current.signal,
+      });
+
+      const data = await response.json();
+      setLoaderPosition(null);
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate focus highlights');
+      }
+
+      if (data.requestPreview) {
+        setLastRequestPreview(data.requestPreview as AutocompleteRequestPreview);
+      }
+
+      const appliedCount = applyFocusHighlights(Array.isArray(data.highlights) ? data.highlights : []);
+      if (appliedCount === 0) {
+        setFocusHighlightError('The model did not return exact words found in the current phrase.');
+      }
+
+      if (data.usage && modelPricing[selectedModel]) {
+        const pricing = modelPricing[selectedModel];
+        const promptCost = (data.usage.promptTokens / 1000000) * pricing.prompt;
+        const completionCost = (data.usage.completionTokens / 1000000) * pricing.completion;
+        setLastGenerationCost(promptCost + completionCost);
+      } else {
+        setLastGenerationCost(null);
+      }
+
+      fetchBalance();
+    } catch (error) {
+      setLoaderPosition(null);
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('Focus color cancelled');
+      } else {
+        const message = error instanceof Error ? error.message : 'Failed to generate focus colors';
+        setFocusHighlightError(message);
+        console.error('Focus color error:', error);
+      }
+    } finally {
+      setIsFocusHighlighting(false);
+      abortControllerRef.current = null;
+    }
+  }, [editor, isAutoCompleting, isFocusHighlighting, completion.isActive, getFocusTextContext, hasFocusTextColor, clearFocusTextColor, getCursorCoords, focusColorRules, selectedModel, focusPrompt, applyFocusHighlights, modelPricing, fetchBalance]);
+
   const handleAutoComplete = useCallback(async () => {
-    if (!editor || isAutoCompleting) return;
+    if (!editor || isAutoCompleting || isFocusHighlighting) return;
 
     // Keep editor focused (prevents keyboard from hiding on mobile)
     editor.commands.focus();
@@ -1135,11 +1329,11 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       setIsAutoCompleting(false);
       abortControllerRef.current = null;
     }
-  }, [editor, isAutoCompleting, getTextForCompletion, selectedModel, customPrompt, embeddingModelId, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio, autoGenerateTts]);
+  }, [editor, isAutoCompleting, isFocusHighlighting, getTextForCompletion, selectedModel, customPrompt, embeddingModelId, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio, autoGenerateTts]);
 
   // Handle regeneration when Tab is pressed with no words selected
   const handleRegenerate = useCallback(async () => {
-    if (!editor || isAutoCompleting || !completion.isActive || !completion.range) return;
+    if (!editor || isAutoCompleting || isFocusHighlighting || !completion.isActive || !completion.range) return;
     
     // Keep editor focused (prevents keyboard from hiding on mobile)
     editor.commands.focus();
@@ -1260,7 +1454,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       setIsAutoCompleting(false);
       abortControllerRef.current = null;
     }
-  }, [editor, isAutoCompleting, completion, attemptHistory, getTextForCompletion, buildRegenPrompt, selectedModel, embeddingModelId, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio, autoGenerateTts]);
+  }, [editor, isAutoCompleting, isFocusHighlighting, completion, attemptHistory, getTextForCompletion, buildRegenPrompt, selectedModel, embeddingModelId, fetchBalance, modelPricing, getCursorCoords, cleanupTtsAudio, generateTtsForCompletion, unlockTtsAudio, autoGenerateTts]);
 
   // Cancel ongoing generation
   const cancelGeneration = useCallback(() => {
@@ -1270,6 +1464,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     }
     setLoaderPosition(null);
     setIsAutoCompleting(false);
+    setIsFocusHighlighting(false);
     cleanupTtsAudio();
     // Keep editor focused (prevents keyboard from hiding on mobile)
     editor?.commands.focus();
@@ -1469,31 +1664,10 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   // Handle keyboard events
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Desktop panel shortcuts (avoid typing inside form inputs)
-      if (!isMobile && !isChatModalOpen && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        const target = e.target as HTMLElement | null;
-        const tag = target?.tagName?.toLowerCase();
-        const isFormField = tag === 'input' || tag === 'textarea' || tag === 'select';
-
-        if (!isFormField) {
-          const k = e.key.toLowerCase();
-          if (k === 'r') {
-            e.preventDefault();
-            setIsSidebarOpen(v => !v);
-            return;
-          }
-          if (k === 'l') {
-            e.preventDefault();
-            setIsLeftSidebarOpen(v => !v);
-            return;
-          }
-        }
-      }
-
       // Handle Escape - cancel generation or completion
       if (e.key === 'Escape') {
         e.preventDefault();
-        if (isAutoCompleting) {
+        if (isAutoCompleting || isFocusHighlighting) {
           cancelGeneration();
         } else if (completion.isActive) {
           cancelCompletion();
@@ -1503,16 +1677,9 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
 
       if (e.key === 'Tab' && !e.shiftKey) {
         e.preventDefault();
-        
-        if (completion.isActive) {
-          // If no words selected, regenerate instead of confirm
-          if (completion.selectedCount === 0) {
-            handleRegenerate();
-          } else {
-            confirmCompletion();
-          }
-        } else if (!isAutoCompleting) {
-          handleAutoComplete();
+
+        if (!isAutoCompleting && !isFocusHighlighting) {
+          handleFocusHighlight();
         }
         return;
       }
@@ -1546,7 +1713,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [completion.isActive, completion.selectedCount, isAutoCompleting, handleAutoComplete, handleRegenerate, confirmCompletion, cancelCompletion, cancelGeneration, selectNextWord, deselectLastWord, selectAllWords, saveCompletion, isMobile, isChatModalOpen]);
+  }, [completion.isActive, isAutoCompleting, isFocusHighlighting, handleFocusHighlight, cancelCompletion, cancelGeneration, selectNextWord, deselectLastWord, selectAllWords, saveCompletion, isMobile, isChatModalOpen]);
 
   // Handle clicks on saved completion markers
   useEffect(() => {
@@ -1695,7 +1862,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   };
 
   return (
-    <div className={`flex w-full min-h-screen bg-black text-white relative ${completion.isActive ? 'completion-active' : ''} ${isAutoCompleting ? 'generating' : ''}`}>
+    <div className={`flex w-full min-h-screen bg-black text-white relative ${completion.isActive ? 'completion-active' : ''} ${isAutoCompleting || isFocusHighlighting ? 'generating' : ''}`}>
       {/* Completion Mode Indicator - Visible on both mobile and desktop now, positioned via ref on mobile */}
       {completion.isActive && (
         <div 
@@ -1819,16 +1986,109 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             AI Assistant
           </h2>
 
+          {/* Primary Focus Highlight */}
+          <div className="flex flex-col gap-3 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-zinc-300 flex items-center gap-2">
+                <Palette size={16} />
+                FOCUS PROMPT
+              </span>
+              <button
+                type="button"
+                onClick={handleFocusHighlight}
+                disabled={isFocusHighlighting || isAutoCompleting}
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-700 disabled:cursor-not-allowed rounded text-white text-xs font-medium transition-colors cursor-pointer"
+                title="Focus color"
+              >
+                {isFocusHighlighting ? <Loader2 size={14} className="animate-spin" /> : <Split size={14} />}
+                Color
+              </button>
+            </div>
+            <textarea
+              value={focusPrompt}
+              onChange={(e) => setFocusPrompt(e.target.value)}
+              rows={4}
+              className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-zinc-500 resize-none"
+              placeholder="Enter focus prompt..."
+            />
+            <div className="grid grid-cols-[96px_1fr] gap-2">
+              <select
+                value={selectedFocusColor}
+                onChange={(e) => setSelectedFocusColor(e.target.value)}
+                className="bg-zinc-900 border border-zinc-700 rounded px-2 py-2 text-xs text-white focus:outline-none focus:border-zinc-500"
+                title="Focus color"
+              >
+                {FOCUS_COLORS.map(({ color, label }) => (
+                  <option key={color} value={color}>{label}</option>
+                ))}
+              </select>
+              <input
+                value={focusColorRules[selectedFocusColor] || ''}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setFocusColorRules(prev => ({ ...prev, [selectedFocusColor]: value }));
+                }}
+                className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-xs text-white focus:outline-none focus:border-zinc-500"
+                placeholder="What this text color means..."
+              />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {FOCUS_COLORS.filter(({ color }) => (focusColorRules[color] || '').trim()).map(({ color, label }) => (
+                <button
+                  key={color}
+                  type="button"
+                  onClick={() => setSelectedFocusColor(color)}
+                  className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-[11px] transition-colors ${
+                    selectedFocusColor === color ? 'border-white text-white bg-zinc-700' : 'border-zinc-700 text-zinc-400 bg-zinc-900 hover:text-white'
+                  }`}
+                  title={focusColorRules[color]}
+                >
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
+                  {label}
+                </button>
+              ))}
+            </div>
+            {focusHighlightError && (
+              <div className="p-2 bg-red-900/50 border border-red-700 rounded text-xs text-red-300">
+                {focusHighlightError}
+              </div>
+            )}
+            <div className="text-xs text-zinc-500">
+              <kbd className="px-1 py-0.5 bg-zinc-700 rounded">Tab</kbd> colors or clears the current phrase.
+            </div>
+          </div>
+
+          {/* Secondary Auto-complete */}
+          <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
+            <span className="text-sm text-zinc-400">Auto-complete</span>
+            <button
+              type="button"
+              onClick={handleAutoComplete}
+              disabled={isAutoCompleting || isFocusHighlighting}
+              className="flex items-center justify-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 disabled:bg-zinc-700 disabled:cursor-not-allowed rounded text-white font-medium transition-colors cursor-pointer border border-zinc-700"
+            >
+              {isAutoCompleting ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Sparkles size={18} />
+                  Complete 2 Sentences
+                </>
+              )}
+            </button>
+            {autoCompleteError && (
+              <div className="p-2 bg-red-900/50 border border-red-700 rounded text-xs text-red-300">
+                {autoCompleteError}
+              </div>
+            )}
+          </div>
+
           {/* Navigation */}
           <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
             <span className="text-sm text-zinc-400">Navigate</span>
-            <Link
-              href="/openclaw-journals"
-              className="flex items-center justify-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 rounded text-white font-medium transition-colors cursor-pointer"
-            >
-              <Tag size={18} />
-              Journals
-            </Link>
             <Link
               href="/audiobooks"
               className="flex items-center justify-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 rounded text-white font-medium transition-colors cursor-pointer"
@@ -2069,7 +2329,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                   <button
                     key={model.id}
                     type="button"
-                    onClick={() => setSelectedModel(model.id)}
+                    onClick={() => selectEditorModel(model.id)}
                     className={`flex items-center justify-between px-3 py-2 rounded text-sm text-left transition-colors cursor-pointer ${
                       isSelected 
                         ? 'bg-blue-600 text-white' 
@@ -2126,60 +2386,9 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             {attemptHistory.attempts.length > 0 && (
               <div className="mt-1 p-2 bg-blue-900/30 border border-blue-700 rounded text-xs text-blue-300">
                 <span className="font-medium">Attempts: {attemptHistory.attempts.length}</span>
-                <p className="mt-1 text-blue-400">Press Tab with no selection to regenerate</p>
+                <p className="mt-1 text-blue-400">Use the mobile regenerate button or completion controls to regenerate.</p>
               </div>
             )}
-          </div>
-
-          {/* Auto-complete Button */}
-          <div className="flex flex-col gap-2">
-            <span className="text-sm text-zinc-400">Auto-complete</span>
-            <button
-              type="button"
-              onClick={handleAutoComplete}
-              disabled={isAutoCompleting}
-              className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-700 disabled:cursor-not-allowed rounded text-white font-medium transition-colors cursor-pointer"
-            >
-              {isAutoCompleting ? (
-                <>
-                  <Loader2 size={18} className="animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Sparkles size={18} />
-                  Complete 2 Sentences
-                </>
-              )}
-            </button>
-            <div className="text-xs text-zinc-500 space-y-1">
-              <p><kbd className="px-1 py-0.5 bg-zinc-700 rounded">Tab</kbd> to generate completion</p>
-              <p><kbd className="px-1 py-0.5 bg-zinc-700 rounded">→</kbd> <kbd className="px-1 py-0.5 bg-zinc-700 rounded">←</kbd> to select words</p>
-              <p><kbd className="px-1 py-0.5 bg-zinc-700 rounded">Space</kbd> to select all words</p>
-              <p><kbd className="px-1 py-0.5 bg-zinc-700 rounded">Tab</kbd> confirm or regenerate</p>
-              <p><kbd className="px-1 py-0.5 bg-zinc-700 rounded">Esc</kbd> to cancel</p>
-            </div>
-            {autoCompleteError && (
-              <div className="mt-2 p-2 bg-red-900/50 border border-red-700 rounded text-xs text-red-300">
-                {autoCompleteError}
-              </div>
-            )}
-          </div>
-
-          {/* Voice Assistant Button */}
-          <div className="flex flex-col gap-2">
-            <span className="text-sm text-zinc-400">Chat</span>
-            <button
-              type="button"
-              onClick={() => setIsModalOpen(true)}
-              className="flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 hover:bg-purple-700 rounded text-white font-medium transition-colors cursor-pointer"
-            >
-              <MessageSquare size={18} />
-              Open Chat
-            </button>
-            <div className="text-xs text-zinc-500">
-              Chat with an OpenRouter model (conversation clears when you close the popup)
-            </div>
           </div>
 
         </div>
@@ -2190,7 +2399,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         type="button"
         ref={leftToggleRef}
         onClick={toggleLeftSidebar}
-        title="Toggle left panel (Shift+L)"
+        title="Toggle left panel"
         className={`fixed top-8 z-[60] p-2 bg-zinc-800 rounded-r-md text-white transition-all duration-300 cursor-pointer hover:bg-zinc-700 ${
           isLeftSidebarOpen ? 'left-72 max-md:left-72' : 'left-0'
         }`}
@@ -2417,12 +2626,22 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         type="button"
         ref={rightToggleRef}
         onClick={toggleSidebar}
-        title="Toggle right panel (Shift+R)"
-        className={`fixed top-8 z-[60] p-2 bg-zinc-800 rounded-l-md text-white transition-all duration-300 cursor-pointer hover:bg-zinc-700 ${
+        title="Toggle right panel"
+        className={`fixed top-24 z-[60] p-2 bg-zinc-800 rounded-l-md text-white transition-all duration-300 cursor-pointer hover:bg-zinc-700 ${
           isSidebarOpen ? 'right-64 max-md:right-64' : 'right-0'
         }`}
       >
         {isSidebarOpen ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+      </button>
+
+      <button
+        type="button"
+        onClick={() => setIsModalOpen(!isChatModalOpen)}
+        title="Toggle chat panel"
+        className="fixed top-36 z-[80] p-2 bg-zinc-800 rounded-l-md text-white transition-all duration-300 cursor-pointer hover:bg-zinc-700"
+        style={{ right: isChatModalOpen ? 'min(30rem, calc(100vw - 2.5rem))' : 0 }}
+      >
+        <MessageSquare size={20} />
       </button>
 
       {/* Mobile Sidebar Overlay */}
@@ -2614,7 +2833,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
           )}
 
           {/* Cancel generation button - shown during loading */}
-          {isAutoCompleting && !completion.isActive && (
+          {(isAutoCompleting || isFocusHighlighting) && !completion.isActive && (
             <button
               type="button"
               tabIndex={-1}
@@ -2631,7 +2850,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
           )}
 
           {/* Main FAB - Generate completion */}
-          {!completion.isActive && !isAutoCompleting && (
+          {!completion.isActive && !isAutoCompleting && !isFocusHighlighting && (
             <div className="flex flex-col items-end gap-3 pointer-events-none">
               <button
                 type="button"
@@ -2652,11 +2871,11 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                 tabIndex={-1}
                 onMouseDown={(e) => e.preventDefault()}
                 onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                onTouchEnd={(e) => { e.preventDefault(); handleAutoComplete(); }}
-                onClick={handleAutoComplete}
+                onTouchEnd={(e) => { e.preventDefault(); handleFocusHighlight(); }}
+                onClick={handleFocusHighlight}
                 className="p-4 rounded-full bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-lg hover:shadow-blue-500/25 hover:scale-105 active:scale-95 select-none pointer-events-auto"
                 style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
-                title="Generate AI completion"
+                title="Focus color"
               >
                 <Split size={24} />
               </button>
