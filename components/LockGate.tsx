@@ -11,6 +11,7 @@ function isDigitKey(key: string): boolean {
 
 export default function LockGate({ children }: { children: React.ReactNode }) {
   const unlockToken = useUnlockStore(s => s.unlockToken);
+  const hydrateUnlockToken = useUnlockStore(s => s.hydrateFromStorage);
   const setUnlockToken = useUnlockStore(s => s.setUnlockToken);
 
   const [status, setStatus] = useState<UnlockStatus | null>(null);
@@ -23,6 +24,10 @@ export default function LockGate({ children }: { children: React.ReactNode }) {
 
   const configured = status?.configured ?? true;
   const activeValue = configured ? pin : setStep === 1 ? pin : confirmPin;
+
+  useEffect(() => {
+    hydrateUnlockToken();
+  }, [hydrateUnlockToken]);
 
   useEffect(() => {
     let cancelled = false;

@@ -91,6 +91,7 @@ export default function VoiceChat() {
 
   const currentScrollRef = useRef<HTMLDivElement | null>(null);
   const openScrollRef = useRef<HTMLDivElement | null>(null);
+  const activeTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const bodyOverflowRef = useRef<string | null>(null);
   const bodyOverscrollRef = useRef<string | null>(null);
@@ -105,6 +106,21 @@ export default function VoiceChat() {
   const activeAttachments = activeTab === 'open' ? openAttachments : attachments;
   const activeModel = models.find((m) => m.id === activePayload?.conversation.modelId);
   const activeSupportsVision = Boolean(activeModel?.supportsVision);
+
+  const resizeActiveTextarea = useCallback(() => {
+    const el = activeTextareaRef.current;
+    if (!el) return;
+
+    el.style.height = 'auto';
+    const maxHeight = Math.max(96, Math.round(window.innerHeight * 0.4));
+    const nextHeight = Math.min(el.scrollHeight, maxHeight);
+    el.style.height = `${nextHeight}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, []);
+
+  useEffect(() => {
+    resizeActiveTextarea();
+  }, [activeInput, activeTab, resizeActiveTextarea]);
 
   const loadModels = useCallback(async () => {
     const res = await authFetch('/api/models');
@@ -616,16 +632,16 @@ export default function VoiceChat() {
           )}
           <div className="flex gap-2">
             <textarea
+              ref={activeTextareaRef}
               value={activeTab === 'open' ? openInput : input}
-              onChange={(e) => activeTab === 'open' ? setOpenInput(e.target.value) : setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  void sendMessage();
-                }
+              onChange={(e) => {
+                if (activeTab === 'open') setOpenInput(e.target.value);
+                else setInput(e.target.value);
+                window.requestAnimationFrame(resizeActiveTextarea);
               }}
+              onInput={resizeActiveTextarea}
               rows={1}
-              className="max-h-36 flex-1 resize-none rounded-xl border border-zinc-700 bg-zinc-900/90 px-3 py-2 text-base leading-6 text-white shadow-inner focus:border-cyan-500/70 focus:outline-none md:text-sm md:leading-5"
+              className="max-h-[40dvh] flex-1 resize-none overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900/90 px-3 py-2 text-base leading-6 text-white shadow-inner focus:border-cyan-500/70 focus:outline-none md:text-sm md:leading-5"
               placeholder={activeSupportsVision ? 'Type a message, attach images, or send just an image...' : 'Type a message...'}
               disabled={isSending}
             />

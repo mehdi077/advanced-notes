@@ -4,6 +4,8 @@ const STORAGE_KEY = 'advanced-notes.unlockToken';
 
 type UnlockState = {
   unlockToken: string | null;
+  hasHydrated: boolean;
+  hydrateFromStorage: () => void;
   setUnlockToken: (token: string | null) => void;
   clearUnlockToken: () => void;
 };
@@ -28,13 +30,17 @@ function writeStoredUnlockToken(token: string | null) {
 }
 
 export const useUnlockStore = create<UnlockState>((set) => ({
-  unlockToken: readStoredUnlockToken(),
+  unlockToken: null,
+  hasHydrated: false,
+  hydrateFromStorage: () => {
+    set({ unlockToken: readStoredUnlockToken(), hasHydrated: true });
+  },
   setUnlockToken: (token) => {
     writeStoredUnlockToken(token);
-    set({ unlockToken: token });
+    set({ unlockToken: token, hasHydrated: true });
   },
   clearUnlockToken: () => {
     writeStoredUnlockToken(null);
-    set({ unlockToken: null });
+    set({ unlockToken: null, hasHydrated: true });
   },
 }));
