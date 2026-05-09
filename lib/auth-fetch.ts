@@ -1,8 +1,12 @@
 import { useUnlockStore } from '@/lib/stores/unlock-store';
 
-export function authFetch(input: RequestInfo | URL, init?: RequestInit) {
+export async function authFetch(input: RequestInfo | URL, init?: RequestInit) {
   const token = useUnlockStore.getState().unlockToken;
   const headers = new Headers(init?.headers);
   if (token) headers.set('x-an-unlock', token);
-  return fetch(input, { ...init, headers });
+  const response = await fetch(input, { ...init, headers });
+  if (response.status === 401) {
+    useUnlockStore.getState().clearUnlockToken();
+  }
+  return response;
 }

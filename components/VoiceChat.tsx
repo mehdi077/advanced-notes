@@ -94,6 +94,11 @@ export default function VoiceChat() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const bodyOverflowRef = useRef<string | null>(null);
   const bodyOverscrollRef = useRef<string | null>(null);
+  const bodyPositionRef = useRef<string | null>(null);
+  const bodyTopRef = useRef<string | null>(null);
+  const bodyWidthRef = useRef<string | null>(null);
+  const lockedScrollYRef = useRef(0);
+  const fixedBodyForMobileRef = useRef(false);
 
   const activePayload = activeTab === 'open' ? openChat : current;
   const activeInput = activeTab === 'open' ? openInput : input;
@@ -143,9 +148,19 @@ export default function VoiceChat() {
     if (bodyOverflowRef.current === null) {
       bodyOverflowRef.current = document.body.style.overflow;
       bodyOverscrollRef.current = document.body.style.overscrollBehavior;
+      bodyPositionRef.current = document.body.style.position;
+      bodyTopRef.current = document.body.style.top;
+      bodyWidthRef.current = document.body.style.width;
+      lockedScrollYRef.current = window.scrollY;
     }
     document.body.style.overflow = 'hidden';
     document.body.style.overscrollBehavior = 'contain';
+    if (window.matchMedia('(max-width: 767px)').matches) {
+      fixedBodyForMobileRef.current = true;
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${lockedScrollYRef.current}px`;
+      document.body.style.width = '100%';
+    }
   }, []);
 
   const unlockDocumentScroll = useCallback(() => {
@@ -153,8 +168,18 @@ export default function VoiceChat() {
     if (bodyOverflowRef.current === null) return;
     document.body.style.overflow = bodyOverflowRef.current;
     document.body.style.overscrollBehavior = bodyOverscrollRef.current ?? '';
+    document.body.style.position = bodyPositionRef.current ?? '';
+    document.body.style.top = bodyTopRef.current ?? '';
+    document.body.style.width = bodyWidthRef.current ?? '';
+    if (fixedBodyForMobileRef.current) {
+      window.scrollTo(0, lockedScrollYRef.current);
+    }
     bodyOverflowRef.current = null;
     bodyOverscrollRef.current = null;
+    bodyPositionRef.current = null;
+    bodyTopRef.current = null;
+    bodyWidthRef.current = null;
+    fixedBodyForMobileRef.current = false;
   }, []);
 
   useEffect(() => {
@@ -174,6 +199,30 @@ export default function VoiceChat() {
       unlockDocumentScroll();
     };
   }, [isOpen, lockDocumentScroll, unlockDocumentScroll]);
+
+  useEffect(() => {
+    if (!isOpen || typeof window === 'undefined' || !window.visualViewport) return;
+
+    const root = document.documentElement;
+    const viewport = window.visualViewport;
+
+    const updateViewportVars = () => {
+      const keyboardInset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+      root.style.setProperty('--chat-vvtop', `${viewport.offsetTop}px`);
+      root.style.setProperty('--chat-keyboard-inset', `${keyboardInset}px`);
+    };
+
+    updateViewportVars();
+    viewport.addEventListener('resize', updateViewportVars);
+    viewport.addEventListener('scroll', updateViewportVars);
+
+    return () => {
+      viewport.removeEventListener('resize', updateViewportVars);
+      viewport.removeEventListener('scroll', updateViewportVars);
+      root.style.removeProperty('--chat-vvtop');
+      root.style.removeProperty('--chat-keyboard-inset');
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen || activeTab !== 'current') return;
@@ -502,7 +551,7 @@ export default function VoiceChat() {
           <select
             value={payload.conversation.modelId}
             onChange={(e) => void updateConversationModel(payload, e.target.value)}
-            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-950/70 px-3 py-2 text-sm text-white shadow-inner focus:border-cyan-500/70 focus:outline-none"
+            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-950/70 px-3 py-2 text-base text-white shadow-inner focus:border-cyan-500/70 focus:outline-none md:text-sm"
           >
             {modelOptions.map((m) => {
               return <option key={m.id} value={m.id}>{modelLabel(m)}</option>;
@@ -510,7 +559,7 @@ export default function VoiceChat() {
           </select>
         </div>
 
-        <div ref={scrollRef} data-chat-scrollable="true" className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3 space-y-3">
+        <div ref={scrollRef} data-chat-scrollable="true" className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-3 max-md:pb-36">
           {payload.messages.length === 0 && (
             <div className="text-sm text-zinc-500">Start a conversation. It stays saved in data.db.</div>
           )}
@@ -547,7 +596,7 @@ export default function VoiceChat() {
           {isSending && <div className="text-sm text-zinc-500">Assistant is typing...</div>}
         </div>
 
-        <div className="border-t border-zinc-800/80 bg-zinc-950/40 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3">
+        <div className="border-t border-zinc-800/80 bg-zinc-950/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 backdrop-blur-xl transition-transform duration-200 max-md:fixed max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:z-[100] max-md:translate-y-[calc(var(--chat-keyboard-inset,0px)*-1)] md:bg-zinc-950/40 md:backdrop-blur-none">
           {activeAttachments.length > 0 && (
             <div className="mb-3 flex gap-2 overflow-x-auto">
               {activeAttachments.map((a, idx) => (
@@ -576,7 +625,7 @@ export default function VoiceChat() {
                 }
               }}
               rows={1}
-              className="max-h-36 flex-1 resize-none rounded-xl border border-zinc-700 bg-zinc-900/90 px-3 py-2 text-sm leading-5 text-white shadow-inner focus:border-cyan-500/70 focus:outline-none"
+              className="max-h-36 flex-1 resize-none rounded-xl border border-zinc-700 bg-zinc-900/90 px-3 py-2 text-base leading-6 text-white shadow-inner focus:border-cyan-500/70 focus:outline-none md:text-sm md:leading-5"
               placeholder={activeSupportsVision ? 'Type a message, attach images, or send just an image...' : 'Type a message...'}
               disabled={isSending}
             />
@@ -634,7 +683,7 @@ export default function VoiceChat() {
     <div
       className={`fixed right-0 top-0 z-[70] h-full border-l border-zinc-800/80 bg-zinc-950/95 shadow-2xl shadow-black/40 backdrop-blur-xl transition-transform duration-300 ease-in-out ${
         isOpen ? 'translate-x-0' : 'translate-x-full'
-      } w-full max-w-[30rem] max-sm:max-w-full overscroll-contain`}
+      } w-full max-w-[30rem] overscroll-contain max-md:inset-x-0 max-md:top-0 max-md:h-[100lvh] max-md:max-w-none max-md:border-l-0 max-md:transition-transform md:h-full`}
       onWheel={stopDocumentScroll}
       onTouchMove={(e) => e.stopPropagation()}
       onMouseEnter={lockDocumentScroll}
@@ -788,7 +837,7 @@ export default function VoiceChat() {
                       setSettings(s => s ? { ...s, selectedModelId } : s);
                       void saveSettings({ selectedModelId });
                     }}
-                    className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white focus:border-cyan-500/70 focus:outline-none"
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-base text-white focus:border-cyan-500/70 focus:outline-none md:text-sm"
                   >
                     {modelOptions.map((m) => (
                       <option key={m.id} value={m.id}>{modelLabel(m)}</option>
@@ -802,7 +851,7 @@ export default function VoiceChat() {
                     <input
                       value={newModelId}
                       onChange={(e) => setNewModelId(e.target.value)}
-                      className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-zinc-500 focus:outline-none"
+                      className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-base text-white focus:border-zinc-500 focus:outline-none md:text-sm"
                       placeholder="provider/model-id"
                     />
                     <button
@@ -851,7 +900,7 @@ export default function VoiceChat() {
                       void saveSettings({ systemPrompt });
                     }}
                     rows={8}
-                    className="w-full resize-none rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-zinc-500 focus:outline-none"
+                    className="w-full resize-none rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-base text-white focus:border-zinc-500 focus:outline-none md:text-sm"
                   />
                 </div>
 

@@ -44,6 +44,14 @@ const FOCUS_COLORS = [
   { color: '#fb923c', label: 'Orange' },
   { color: '#a78bfa', label: 'Purple' },
 ];
+const TEXT_COLORS = [
+  { color: '#ffffff', label: 'White' },
+  { color: '#ef4444', label: 'Red' },
+  { color: '#3b82f6', label: 'Blue' },
+  { color: '#22c55e', label: 'Green' },
+  { color: '#eab308', label: 'Yellow' },
+  { color: '#a855f7', label: 'Purple' },
+];
 const DEFAULT_FOCUS_COLOR_RULES: Record<string, string> = {
   '#facc15': 'the What',
   '#4ade80': 'the where',
@@ -129,6 +137,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const [focusPrompt, setFocusPrompt] = useState(DEFAULT_FOCUS_PROMPT);
   const [focusColorRules, setFocusColorRules] = useState<Record<string, string>>(DEFAULT_FOCUS_COLOR_RULES);
   const [selectedFocusColor, setSelectedFocusColor] = useState(FOCUS_COLORS[0].color);
+  const [isTextColorPaletteOpen, setIsTextColorPaletteOpen] = useState(false);
   const [attemptHistory, setAttemptHistory] = useState<AttemptHistory>({ attempts: [] });
   const [completion, setCompletion] = useState<CompletionState>({
     isActive: false,
@@ -1811,6 +1820,10 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     editor.commands.insertSavedCompletion('');
   };
 
+  const applyTextColor = (color: string) => {
+    editor.chain().focus().setColor(color).run();
+  };
+
   const makeId = () => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -2531,8 +2544,10 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             <span className="flex items-center gap-2 text-sm"><Bold size={16} /> Bold</span>
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => editor.chain().focus().toggleBold().run()}
               className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${editor.isActive('bold') ? 'bg-blue-600' : 'bg-zinc-700'}`}
+              title="Toggle bold"
             >
               <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${editor.isActive('bold') ? 'translate-x-5' : 'translate-x-1'}`} />
             </button>
@@ -2544,6 +2559,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             <div className="flex items-center gap-2">
               <button
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => adjustFontSize(-2)}
                 className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
                 title="Decrease text size"
@@ -2553,6 +2569,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               <span className="w-12 text-center text-xs font-mono text-zinc-400 select-none">{getCurrentFontSizePx()}px</span>
               <button
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => adjustFontSize(2)}
                 className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
                 title="Increase text size"
@@ -2567,6 +2584,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             <span className="flex items-center gap-2 text-sm"><Strikethrough size={16} /> Strike</span>
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => editor.chain().focus().toggleStrike().run()}
               className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${editor.isActive('strike') ? 'bg-blue-600' : 'bg-zinc-700'}`}
               title="Toggle strikethrough"
@@ -2575,29 +2593,13 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             </button>
           </div>
 
-          {/* Color Control */}
-          <div className="flex flex-col gap-2">
-            <span className="flex items-center gap-2 text-sm"><Palette size={16} /> Text Color</span>
-            <div className="flex gap-2 flex-wrap">
-              {['#ffffff', '#ef4444', '#3b82f6', '#22c55e', '#eab308', '#a855f7'].map((color) => (
-                <button
-                  key={color}
-                  type="button"
-                  onClick={() => editor.chain().focus().setColor(color).run()}
-                  className={`w-6 h-6 rounded-full border cursor-pointer hover:scale-110 transition-transform ${editor.isActive('textStyle', { color }) ? 'border-white scale-110' : 'border-transparent'}`}
-                  style={{ backgroundColor: color }}
-                  title={color}
-                />
-              ))}
-            </div>
-          </div>
-
           {/* Highlight Control */}
           <div className="flex flex-col gap-2">
             <span className="flex items-center gap-2 text-sm"><Highlighter size={16} /> Highlight</span>
             <div className="flex gap-2 flex-wrap">
               <button
                   type="button"
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => editor.chain().focus().unsetHighlight().run()}
                   className="px-2 py-1 text-xs bg-zinc-800 rounded border border-zinc-700 cursor-pointer hover:bg-zinc-700 transition-colors"
               >
@@ -2607,6 +2609,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                 <button
                   key={color}
                   type="button"
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => editor.chain().focus().toggleHighlight({ color }).run()}
                   className={`w-6 h-6 rounded-full border cursor-pointer hover:scale-110 transition-transform ${editor.isActive('highlight', { color }) ? 'border-white scale-110' : 'border-transparent'}`}
                   style={{ backgroundColor: color }}
@@ -2638,7 +2641,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         type="button"
         onClick={() => setIsModalOpen(!isChatModalOpen)}
         title="Toggle chat panel"
-        className="fixed top-36 z-[80] p-2 bg-zinc-800 rounded-l-md text-white transition-all duration-300 cursor-pointer hover:bg-zinc-700"
+        className="fixed top-36 z-[80] p-2 bg-zinc-800 rounded-l-md text-white transition-all duration-300 cursor-pointer hover:bg-zinc-700 max-md:hidden"
         style={{ right: isChatModalOpen ? 'min(30rem, calc(100vw - 2.5rem))' : 0 }}
       >
         <MessageSquare size={20} />
@@ -2695,13 +2698,13 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
       {isMounted && createPortal(
         <div 
           ref={fabContainerRef}
-          className="fixed right-0 z-[9999] flex flex-col items-end justify-end pr-6 select-none md:hidden pointer-events-none"
+          className="fixed right-0 z-[9999] flex flex-col items-end justify-end pr-6 select-none pointer-events-none"
           contentEditable={false}
           style={{ 
             // top is handled by ref
             // removed bottom positioning
             // width adjusted for controls
-            width: completion.isActive ? '100%' : '100px',
+            width: completion.isActive ? '100%' : isTextColorPaletteOpen ? 'min(380px, 100vw)' : '100px',
             WebkitTapHighlightColor: 'transparent',
             WebkitUserSelect: 'none',
             userSelect: 'none',
@@ -2878,6 +2881,169 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                 title="Focus color"
               >
                 <Split size={24} />
+              </button>
+
+              <div className="flex items-start justify-end gap-2 pointer-events-auto">
+                <div
+                  className={`overflow-hidden rounded-2xl border bg-zinc-900/95 text-zinc-200 shadow-lg backdrop-blur-sm transition-all duration-300 ease-out ${
+                    isTextColorPaletteOpen
+                      ? 'max-h-80 w-72 translate-x-0 border-zinc-700/50 p-3 opacity-100'
+                      : 'max-h-0 w-0 translate-x-3 border-transparent p-0 opacity-0'
+                  }`}
+                  aria-hidden={!isTextColorPaletteOpen}
+                >
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex gap-2">
+                        {TEXT_COLORS.map(({ color, label }) => (
+                          <button
+                            key={color}
+                            type="button"
+                            tabIndex={-1}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                            onTouchEnd={(e) => {
+                              e.preventDefault();
+                              applyTextColor(color);
+                            }}
+                            onClick={() => applyTextColor(color)}
+                            className={`h-7 w-7 shrink-0 rounded-full border shadow-sm transition-transform hover:scale-110 ${
+                              editor.isActive('textStyle', { color }) ? 'scale-110 border-white' : 'border-zinc-700'
+                            }`}
+                            style={{ backgroundColor: color }}
+                            title={label}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        onTouchEnd={(e) => { e.preventDefault(); editor.chain().focus().toggleBold().run(); }}
+                        onClick={() => editor.chain().focus().toggleBold().run()}
+                        className={`flex h-10 items-center justify-center rounded-lg border text-sm font-semibold transition-colors ${
+                          editor.isActive('bold') ? 'border-blue-500 bg-blue-600 text-white' : 'border-zinc-700 bg-zinc-800 hover:bg-zinc-700'
+                        }`}
+                        title="Bold"
+                      >
+                        <Bold size={17} />
+                      </button>
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        onTouchEnd={(e) => { e.preventDefault(); editor.chain().focus().toggleStrike().run(); }}
+                        onClick={() => editor.chain().focus().toggleStrike().run()}
+                        className={`flex h-10 items-center justify-center rounded-lg border transition-colors ${
+                          editor.isActive('strike') ? 'border-blue-500 bg-blue-600 text-white' : 'border-zinc-700 bg-zinc-800 hover:bg-zinc-700'
+                        }`}
+                        title="Strikethrough"
+                      >
+                        <Strikethrough size={17} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-1.5">
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        onTouchEnd={(e) => { e.preventDefault(); adjustFontSize(-2); }}
+                        onClick={() => adjustFontSize(-2)}
+                        className="rounded-md p-1.5 text-zinc-200 transition-colors hover:bg-zinc-700"
+                        title="Decrease text size"
+                      >
+                        <Minus size={17} />
+                      </button>
+                      <span className="min-w-14 text-center text-xs font-mono text-zinc-300">{getCurrentFontSizePx()}px</span>
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        onTouchEnd={(e) => { e.preventDefault(); adjustFontSize(2); }}
+                        onClick={() => adjustFontSize(2)}
+                        className="rounded-md p-1.5 text-zinc-200 transition-colors hover:bg-zinc-700"
+                        title="Increase text size"
+                      >
+                        <Plus size={17} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-2">
+                      <Highlighter size={16} className="shrink-0 text-zinc-400" />
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        onTouchEnd={(e) => { e.preventDefault(); editor.chain().focus().unsetHighlight().run(); }}
+                        onClick={() => editor.chain().focus().unsetHighlight().run()}
+                        className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 transition-colors hover:bg-zinc-700"
+                        title="Remove highlight"
+                      >
+                        None
+                      </button>
+                      {['#facc15', '#4ade80', '#60a5fa', '#f472b6'].map((color) => (
+                        <button
+                          key={color}
+                          type="button"
+                          tabIndex={-1}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                          onTouchEnd={(e) => { e.preventDefault(); editor.chain().focus().toggleHighlight({ color }).run(); }}
+                          onClick={() => editor.chain().focus().toggleHighlight({ color }).run()}
+                          className={`h-6 w-6 shrink-0 rounded-full border transition-transform hover:scale-110 ${
+                            editor.isActive('highlight', { color }) ? 'scale-110 border-white' : 'border-zinc-700'
+                          }`}
+                          style={{ backgroundColor: color }}
+                          title={`Highlight ${color}`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                  onTouchEnd={(e) => {
+                    e.preventDefault();
+                    setIsTextColorPaletteOpen(open => !open);
+                  }}
+                  onClick={() => setIsTextColorPaletteOpen(open => !open)}
+                  className={`p-3 rounded-full bg-zinc-900/95 backdrop-blur-sm hover:bg-zinc-800 transition-all shadow-lg border select-none ${
+                    isTextColorPaletteOpen ? 'border-white text-white' : 'border-zinc-700/50 text-zinc-200'
+                  }`}
+                  style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
+                  title="Text color"
+                  aria-expanded={isTextColorPaletteOpen}
+                >
+                  <Palette size={20} />
+                </button>
+              </div>
+
+              <button
+                type="button"
+                tabIndex={-1}
+                onMouseDown={(e) => e.preventDefault()}
+                onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onTouchEnd={(e) => { e.preventDefault(); setIsModalOpen(!isChatModalOpen); }}
+                onClick={() => setIsModalOpen(!isChatModalOpen)}
+                className={`p-3 rounded-full bg-zinc-900/95 backdrop-blur-sm hover:bg-zinc-800 transition-all shadow-lg border select-none pointer-events-auto md:hidden ${
+                  isChatModalOpen ? 'border-cyan-400 text-cyan-200' : 'border-zinc-700/50 text-zinc-200'
+                }`}
+                style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
+                title="Chat"
+              >
+                <MessageSquare size={20} />
               </button>
             </div>
           )}

@@ -51,6 +51,10 @@ export function isPinConfigured(): boolean {
   return Boolean(getSetting(PIN_SALT_KEY) && getSetting(PIN_VERIFIER_KEY) && getSetting(PIN_PARAMS_KEY));
 }
 
+export function getPinTokenSecretMaterial(): string | null {
+  return getSetting(PIN_VERIFIER_KEY);
+}
+
 export function setPin(pin: string): void {
   if (!/^\d{6}$/.test(pin)) {
     throw new Error('PIN must be exactly 6 digits');

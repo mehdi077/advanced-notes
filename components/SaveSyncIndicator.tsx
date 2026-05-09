@@ -8,6 +8,7 @@ type Kind = 'saved' | 'saving' | 'unsaved' | 'error' | 'offline' | 'locked';
 
 export default function SaveSyncIndicator() {
   const unlockToken = useUnlockStore(s => s.unlockToken);
+  const clearUnlockToken = useUnlockStore(s => s.clearUnlockToken);
   const docId = useSaveSyncStore(s => s.docId);
   const inFlightCount = useSaveSyncStore(s => s.inFlightCount);
   const lastSavedAtMs = useSaveSyncStore(s => s.lastSavedAtMs);
@@ -97,6 +98,15 @@ export default function SaveSyncIndicator() {
       >
         <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
         <span className="whitespace-nowrap">{label}</span>
+        {kind === 'locked' && (
+          <button
+            type="button"
+            onClick={clearUnlockToken}
+            className="ml-1 rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-zinc-100 transition-colors hover:bg-white/20"
+          >
+            Reconnect
+          </button>
+        )}
         {lastSavedWord && (kind === 'saved' || kind === 'unsaved' || kind === 'saving') && (
           <span className="ml-1 whitespace-nowrap rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-zinc-100">
             {lastSavedWord}
