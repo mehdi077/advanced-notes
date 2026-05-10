@@ -32,11 +32,10 @@ export default function SaveSyncIndicator() {
   }, []);
 
   const kind: Kind = useMemo(() => {
-    if (lastError?.status === 401) return 'locked';
     if (!unlockToken) return 'locked';
     if (!isOnline) return 'offline';
     if (inFlightCount > 0) return 'saving';
-    if (lastError && (!lastSavedAtMs || lastError.atMs > lastSavedAtMs)) return 'error';
+    if (isDirty && lastError && (!lastSavedAtMs || lastError.atMs > lastSavedAtMs)) return 'error';
     if (isDirty) return 'unsaved';
     return 'saved';
   }, [unlockToken, isOnline, inFlightCount, isDirty, lastError, lastSavedAtMs]);

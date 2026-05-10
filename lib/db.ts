@@ -176,6 +176,40 @@ db.exec(`
 
 db.exec('CREATE INDEX IF NOT EXISTS openrouter_usage_model_idx ON openrouter_usage(model_id, created_at)');
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS mental_notes (
+    id TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'manual',
+    queue_rank REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_shown_at TEXT,
+    next_eligible_at TEXT,
+    reminder_at TEXT,
+    snoozed_until TEXT,
+    remembered_at TEXT,
+    archived_at TEXT,
+    custom_cooldown_ms INTEGER,
+    shown_count INTEGER NOT NULL DEFAULT 0
+  )
+`);
+
+db.exec('CREATE INDEX IF NOT EXISTS mental_notes_active_queue_idx ON mental_notes(archived_at, remembered_at, next_eligible_at, queue_rank)');
+db.exec('CREATE INDEX IF NOT EXISTS mental_notes_updated_idx ON mental_notes(updated_at DESC)');
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS mental_note_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(note_id) REFERENCES mental_notes(id) ON DELETE CASCADE
+  )
+`);
+
+db.exec('CREATE INDEX IF NOT EXISTS mental_note_events_note_idx ON mental_note_events(note_id, created_at DESC)');
+
 // Ensure the multi-model schema exists; migrate legacy tables if needed.
 (() => {
   // Create new tables if they don't exist (new installs)

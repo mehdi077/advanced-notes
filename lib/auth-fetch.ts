@@ -5,7 +5,7 @@ export async function authFetch(input: RequestInfo | URL, init?: RequestInit) {
   const headers = new Headers(init?.headers);
   if (token) headers.set('x-an-unlock', token);
   const response = await fetch(input, { ...init, headers });
-  if (response.status === 401) {
+  if (response.status === 401 && token && useUnlockStore.getState().unlockToken === token) {
     useUnlockStore.getState().clearUnlockToken();
   }
   return response;

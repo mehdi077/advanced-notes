@@ -11,6 +11,7 @@ function isDigitKey(key: string): boolean {
 
 export default function LockGate({ children }: { children: React.ReactNode }) {
   const unlockToken = useUnlockStore(s => s.unlockToken);
+  const hasHydratedUnlockToken = useUnlockStore(s => s.hasHydrated);
   const hydrateUnlockToken = useUnlockStore(s => s.hydrateFromStorage);
   const setUnlockToken = useUnlockStore(s => s.setUnlockToken);
 
@@ -181,6 +182,14 @@ export default function LockGate({ children }: { children: React.ReactNode }) {
     { label: '0', value: '0', kind: 'digit' },
     { label: '⌫', value: '', kind: 'backspace' },
   ];
+
+  if (!hasHydratedUnlockToken) {
+    return (
+      <div className="fixed inset-0 z-[99999] bg-black text-white flex items-center justify-center px-6 py-10">
+        <div className="text-sm text-zinc-500">Checking lock...</div>
+      </div>
+    );
+  }
 
   if (!unlockToken) {
     return (

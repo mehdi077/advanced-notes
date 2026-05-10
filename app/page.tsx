@@ -4,7 +4,7 @@ import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { debounce } from 'lodash';
 import TiptapEditor from '../components/TiptapEditor';
 import VoiceChat from '../components/VoiceChat';
-import { ArrowDown, ArrowUp, Plus, Settings2, Trash2, X } from 'lucide-react';
+import { ArrowDown, Plus, Settings2, Trash2, X } from 'lucide-react';
 import { authFetch } from '@/lib/auth-fetch';
 import SaveSyncIndicator from '@/components/SaveSyncIndicator';
 import { useSaveSyncStore } from '@/lib/stores/save-sync-store';
@@ -489,19 +489,6 @@ export default function Home() {
 
         <TiptapEditor initialContent={content} onContentUpdate={handleUpdate} />
       </div>
-
-      {/* Scroll-to-top button */}
-      <button
-        type="button"
-        onClick={() => {
-          if (typeof window === 'undefined') return;
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }}
-        className="fixed bottom-[calc(env(safe-area-inset-bottom)+1.5rem)] left-6 md:bottom-8 md:left-8 w-14 h-14 md:w-16 md:h-16 rounded-full bg-zinc-800 hover:bg-zinc-700 shadow-lg transition-colors z-[35] flex items-center justify-center border border-zinc-700"
-        title="Scroll to top"
-      >
-        <ArrowUp size={24} className="text-white" />
-      </button>
 
       {/* Voice Chat Modal */}
       <VoiceChat />

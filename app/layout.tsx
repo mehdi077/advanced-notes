@@ -26,6 +26,8 @@ export const viewport: Viewport = {
 
 import Providers from "./providers";
 import LockGate from "@/components/LockGate";
+import ServerTimeCard from "@/components/ServerTimeCard";
+import MentalNotesNotifier from "@/components/MentalNotesNotifier";
 
 export default function RootLayout({
   children,
@@ -38,7 +40,11 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <Providers>
-          <LockGate>{children}</LockGate>
+          <LockGate>
+            <ServerTimeCard />
+            <MentalNotesNotifier />
+            {children}
+          </LockGate>
         </Providers>
       </body>
     </html>

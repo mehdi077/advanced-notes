@@ -8,7 +8,7 @@ import { Highlight } from '@tiptap/extension-highlight';
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { debounce } from 'lodash';
-import { ChevronRight, ChevronLeft, Bold, Strikethrough, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, MessageSquare, Play, Pause, SkipBack, SkipForward, Database, Plus, Minus, BookOpen, Tag } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Bold, Strikethrough, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, MessageSquare, Play, Pause, SkipBack, SkipForward, Database, Plus, Minus, BookOpen, Tag, ArrowUp, ChartNoAxesCombined, BookmarkPlus, NotebookPen, CircleAlert } from 'lucide-react';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { DEFAULT_MODEL, ModelConfig, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
@@ -56,6 +56,7 @@ const DEFAULT_FOCUS_COLOR_RULES: Record<string, string> = {
   '#facc15': 'the What',
   '#4ade80': 'the where',
 };
+const LEFT_SIDEBAR_TAB_STORAGE_KEY = 'helm.leftSidebarTab';
 
 const SILENT_WAV_DATA_URL =
   'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==';
@@ -118,8 +119,11 @@ interface FocusTextContext {
 }
 
 const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) => {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
+  const [leftSidebarTab, setLeftSidebarTabState] = useState<'assistant' | 'tools'>(() => {
+    if (typeof window === 'undefined') return 'assistant';
+    return window.localStorage.getItem(LEFT_SIDEBAR_TAB_STORAGE_KEY) === 'tools' ? 'tools' : 'assistant';
+  });
   const setIsModalOpen = useVoiceStore(s => s.setIsModalOpen);
   const isChatModalOpen = useVoiceStore(s => s.isModalOpen);
   const [selectedModel, setSelectedModel] = useState<ModelId>(DEFAULT_MODEL);
@@ -138,6 +142,13 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const [focusColorRules, setFocusColorRules] = useState<Record<string, string>>(DEFAULT_FOCUS_COLOR_RULES);
   const [selectedFocusColor, setSelectedFocusColor] = useState(FOCUS_COLORS[0].color);
   const [isTextColorPaletteOpen, setIsTextColorPaletteOpen] = useState(false);
+  const [didSaveMentalNote, setDidSaveMentalNote] = useState(false);
+  const [isMentalNoteModeOpen, setIsMentalNoteModeOpen] = useState(false);
+  const [isMentalReminderOpen, setIsMentalReminderOpen] = useState(false);
+  const [mentalReminderDate, setMentalReminderDate] = useState('');
+  const [mentalReminderTime, setMentalReminderTime] = useState('');
+  const [mentalNoteSelectionError, setMentalNoteSelectionError] = useState(false);
+  const [mentalReminderNow, setMentalReminderNow] = useState(() => new Date());
   const [attemptHistory, setAttemptHistory] = useState<AttemptHistory>({ attempts: [] });
   const [completion, setCompletion] = useState<CompletionState>({
     isActive: false,
@@ -246,8 +257,11 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   // Refs for direct DOM manipulation to avoid re-renders during scroll/resize
   const fabContainerRef = useRef<HTMLDivElement>(null);
   const leftToggleRef = useRef<HTMLButtonElement>(null);
-  const rightToggleRef = useRef<HTMLButtonElement>(null);
   const statusIndicatorRef = useRef<HTMLDivElement>(null);
+  const mobileKeyboardScrollAnchorRef = useRef(0);
+  const mobileKeyboardScrollSuppressUntilRef = useRef(0);
+  const mobileKeyboardPendingAnchorRef = useRef(0);
+  const mobileKeyboardPendingAtRef = useRef(0);
   
   // Track if component is mounted (for portal SSR safety)
   const [isMounted, setIsMounted] = useState(false);
@@ -273,6 +287,13 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     const t = window.setTimeout(() => newModelInputRef.current?.focus(), 0);
     return () => window.clearTimeout(t);
   }, [isAddModelOpen]);
+
+  useEffect(() => {
+    if (!isMentalReminderOpen) return;
+    setMentalReminderNow(new Date());
+    const id = window.setInterval(() => setMentalReminderNow(new Date()), 1000);
+    return () => window.clearInterval(id);
+  }, [isMentalReminderOpen]);
 
   const selectEditorModel = useCallback((id: ModelId) => {
     setSelectedModel(id);
@@ -330,10 +351,6 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         leftToggleRef.current.style.top = `${topOffset + baseTop}px`;
       }
 
-      if (rightToggleRef.current) {
-        rightToggleRef.current.style.top = `${topOffset + baseTop}px`;
-      }
-
       // Update Status Indicator (Completion Bar)
       if (statusIndicatorRef.current) {
         statusIndicatorRef.current.style.top = `${topOffset + 16}px`;
@@ -370,9 +387,6 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         leftToggleRef.current.style.top = `${topOffset + baseTop}px`;
       }
 
-      if (rightToggleRef.current) {
-        rightToggleRef.current.style.top = `${topOffset + baseTop}px`;
-      }
       if (statusIndicatorRef.current) {
         statusIndicatorRef.current.style.top = `${topOffset + 16}px`;
       }
@@ -422,6 +436,87 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const underlineLastErrorStatus = useSaveSyncStore(s => s.lastError?.status ?? null);
 
   const unlockToken = useUnlockStore(s => s.unlockToken);
+
+  useEffect(() => {
+    if (!editor || typeof window === 'undefined') return;
+
+    const isMobileViewport = () => window.matchMedia('(max-width: 767px)').matches;
+
+    const recordPossibleFocusAnchor = () => {
+      if (!isMobileViewport()) return;
+      mobileKeyboardPendingAnchorRef.current = window.scrollY;
+      mobileKeyboardPendingAtRef.current = Date.now();
+    };
+
+    const activateScrollAnchor = () => {
+      if (!isMobileViewport()) return;
+      const now = Date.now();
+      const hasRecentPointerAnchor = now - mobileKeyboardPendingAtRef.current < 1200;
+      mobileKeyboardScrollAnchorRef.current = hasRecentPointerAnchor
+        ? mobileKeyboardPendingAnchorRef.current
+        : window.scrollY;
+      mobileKeyboardScrollSuppressUntilRef.current = now + 700;
+    };
+
+    const cancelScrollAnchor = () => {
+      mobileKeyboardScrollSuppressUntilRef.current = 0;
+    };
+
+    const restoreAnchoredScroll = () => {
+      if (!isMobileViewport()) return;
+      if (Date.now() > mobileKeyboardScrollSuppressUntilRef.current) return;
+
+      const target = mobileKeyboardScrollAnchorRef.current;
+      if (Math.abs(window.scrollY - target) > 1) {
+        window.scrollTo(window.scrollX, target);
+      }
+    };
+
+    const restoreForAFewFrames = () => {
+      restoreAnchoredScroll();
+      let frames = 0;
+      const tick = () => {
+        frames += 1;
+        restoreAnchoredScroll();
+        if (frames < 8 && Date.now() <= mobileKeyboardScrollSuppressUntilRef.current) {
+          window.requestAnimationFrame(tick);
+        }
+      };
+      window.requestAnimationFrame(tick);
+    };
+
+    const activateAndRestoreForAFewFrames = () => {
+      activateScrollAnchor();
+      restoreForAFewFrames();
+    };
+
+    const editorEl = editor.view.dom;
+    const viewport = window.visualViewport;
+
+    editorEl.addEventListener('pointerdown', recordPossibleFocusAnchor, { passive: true });
+    editorEl.addEventListener('touchstart', recordPossibleFocusAnchor, { passive: true });
+    editorEl.addEventListener('touchmove', cancelScrollAnchor, { passive: true });
+    editorEl.addEventListener('wheel', cancelScrollAnchor, { passive: true });
+    editorEl.addEventListener('focusin', activateAndRestoreForAFewFrames);
+    editorEl.addEventListener('focusout', activateAndRestoreForAFewFrames);
+    viewport?.addEventListener('resize', restoreForAFewFrames);
+    viewport?.addEventListener('scroll', restoreForAFewFrames);
+    window.addEventListener('touchmove', cancelScrollAnchor, { passive: true });
+    window.addEventListener('wheel', cancelScrollAnchor, { passive: true });
+
+    return () => {
+      editorEl.removeEventListener('pointerdown', recordPossibleFocusAnchor);
+      editorEl.removeEventListener('touchstart', recordPossibleFocusAnchor);
+      editorEl.removeEventListener('touchmove', cancelScrollAnchor);
+      editorEl.removeEventListener('wheel', cancelScrollAnchor);
+      editorEl.removeEventListener('focusin', activateAndRestoreForAFewFrames);
+      editorEl.removeEventListener('focusout', activateAndRestoreForAFewFrames);
+      viewport?.removeEventListener('resize', restoreForAFewFrames);
+      viewport?.removeEventListener('scroll', restoreForAFewFrames);
+      window.removeEventListener('touchmove', cancelScrollAnchor);
+      window.removeEventListener('wheel', cancelScrollAnchor);
+    };
+  }, [editor]);
 
   useEffect(() => {
     if (!editor) return;
@@ -1796,8 +1891,14 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     return null;
   }
 
-  const toggleSidebar = () => setIsSidebarOpen(v => !v);
   const toggleLeftSidebar = () => setIsLeftSidebarOpen(v => !v);
+
+  const setLeftSidebarTab = (tab: 'assistant' | 'tools') => {
+    setLeftSidebarTabState(tab);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(LEFT_SIDEBAR_TAB_STORAGE_KEY, tab);
+    }
+  };
 
   const getCurrentFontSizePx = () => {
     const attrs = editor.getAttributes('textStyle') as { fontSize?: unknown };
@@ -1840,6 +1941,100 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
     const esc = typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(id) : id.replace(/["\\]/g, '\\$&');
     const el = editor.view.dom.querySelector(`[data-bookmark-id="${esc}"]`) as HTMLElement | null;
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
+  const scrollToTop = () => {
+    if (typeof window === 'undefined') return;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const dateInputValue = (date: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  };
+
+  const timeInputValue = (date: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
+  const getCurrentReminderParts = () => {
+    const d = new Date();
+    d.setSeconds(0, 0);
+    return { date: dateInputValue(d), time: timeInputValue(d), iso: d.toISOString() };
+  };
+
+  const clampReminderParts = (dateValue: string, timeValue: string) => {
+    const now = new Date();
+    now.setSeconds(0, 0);
+    const next = new Date(`${dateValue}T${timeValue}`);
+    const valid = Number.isNaN(next.getTime()) ? now : next;
+    const clamped = valid < now ? now : valid;
+    return { date: dateInputValue(clamped), time: timeInputValue(clamped), iso: clamped.toISOString() };
+  };
+
+  const getSelectedMentalNoteText = () => {
+    const { selection, doc } = editor.state;
+    if (selection.empty) return '';
+    return doc.textBetween(selection.from, selection.to, '\n', '\n').trim();
+  };
+
+  const showMentalNoteSelectionError = () => {
+    setMentalNoteSelectionError(true);
+    window.setTimeout(() => setMentalNoteSelectionError(false), 1000);
+  };
+
+  const openMentalNoteMode = () => {
+    if (!getSelectedMentalNoteText()) {
+      showMentalNoteSelectionError();
+      return;
+    }
+    setIsMentalNoteModeOpen(open => !open);
+  };
+
+  const saveSelectionAsMentalNote = async (reminderAt?: string | null) => {
+    const selectedText = getSelectedMentalNoteText();
+    if (!selectedText) {
+      showMentalNoteSelectionError();
+      return;
+    }
+    const res = await authFetch('/api/mental-notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: selectedText, source: 'selection' }),
+    });
+    if (res.ok) {
+      if (reminderAt) {
+        const data = (await res.json().catch(() => ({}))) as { note?: { id?: string } };
+        if (data.note?.id) {
+          await authFetch('/api/mental-notes', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: data.note.id, reminderAt }),
+          }).catch(() => {});
+        }
+      }
+      setDidSaveMentalNote(true);
+      setIsMentalNoteModeOpen(false);
+      setIsMentalReminderOpen(false);
+      window.setTimeout(() => setDidSaveMentalNote(false), 1000);
+    }
+    editor.commands.focus();
+  };
+
+  const openMentalReminder = () => {
+    const parts = getCurrentReminderParts();
+    setMentalReminderDate(parts.date);
+    setMentalReminderTime(parts.time);
+    setIsMentalNoteModeOpen(false);
+    setIsMentalReminderOpen(true);
+  };
+
+  const confirmMentalReminder = () => {
+    const next = clampReminderParts(mentalReminderDate, mentalReminderTime);
+    setMentalReminderDate(next.date);
+    setMentalReminderTime(next.time);
+    void saveSelectionAsMentalNote(next.iso);
   };
 
   const closeSavedCompletionPopup = () => {
@@ -1994,10 +2189,38 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         } overflow-hidden`}
       >
         <div className="p-4 flex flex-col gap-6 w-72 h-full overflow-y-auto">
-          <h2 className="text-lg font-semibold text-zinc-400 border-b border-zinc-700 pb-2">
+          <h2 className="text-lg font-semibold text-zinc-400">
             <Sparkles size={18} className="inline mr-2" />
-            AI Assistant
+            Panel
           </h2>
+
+          <div className="grid grid-cols-2 gap-1 rounded-lg border border-zinc-700 bg-zinc-950/60 p-1">
+            <button
+              type="button"
+              onClick={() => setLeftSidebarTab('assistant')}
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                leftSidebarTab === 'assistant'
+                  ? 'bg-zinc-800 text-white'
+                  : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-white'
+              }`}
+            >
+              Assistant
+            </button>
+            <button
+              type="button"
+              onClick={() => setLeftSidebarTab('tools')}
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                leftSidebarTab === 'tools'
+                  ? 'bg-zinc-800 text-white'
+                  : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-white'
+              }`}
+            >
+              Tools
+            </button>
+          </div>
+
+          {leftSidebarTab === 'assistant' && (
+            <>
 
           {/* Primary Focus Highlight */}
           <div className="flex flex-col gap-3 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
@@ -2404,6 +2627,208 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
             )}
           </div>
 
+            </>
+          )}
+
+          {leftSidebarTab === 'tools' && (
+            <>
+              <Link
+                href="/mental-notes"
+                className="flex items-center justify-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 rounded text-white font-medium transition-colors cursor-pointer"
+              >
+                <NotebookPen size={18} />
+                Mental Notes
+              </Link>
+
+              <button
+                type="button"
+                onClick={insertStarBlock}
+                className="flex items-center justify-center px-4 py-3 bg-zinc-800 hover:bg-zinc-700 rounded text-white font-medium transition-colors cursor-pointer"
+                title="Insert ★"
+              >
+                ★
+              </button>
+
+              <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-zinc-400 flex items-center gap-2">
+                    <Tag size={16} />
+                    Tags
+                  </span>
+                  <button
+                    type="button"
+                    onClick={insertBookmarkTag}
+                    className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs text-zinc-200 transition-colors cursor-pointer"
+                    title="Insert a tag at the cursor"
+                  >
+                    Insert
+                  </button>
+                </div>
+                {bookmarks.length === 0 ? (
+                  <div className="text-xs text-zinc-500">No tags yet.</div>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {bookmarks.map((b) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => scrollToBookmark(b.id)}
+                        className="w-full text-left px-2 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs text-zinc-200 transition-colors cursor-pointer truncate"
+                        title={`Jump to: ${b.name || b.id}`}
+                      >
+                        {b.name || b.id}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {lastRequestPreview && (
+                <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
+                  <div className="text-sm text-zinc-400">Last request</div>
+
+                  <div className="text-[11px] leading-relaxed text-zinc-200 bg-black/30 border border-zinc-800 rounded p-2 h-[60vh] overflow-auto whitespace-pre-wrap break-words">
+                    {lastRequestPreview.useRagContext && (
+                      <>
+                        <div className="text-zinc-400">Model: <span className="text-zinc-200 font-mono">{lastRequestPreview.model}</span></div>
+                        <div className="text-zinc-400">RAG: <span className="text-green-300">enabled</span></div>
+                        <div className="text-zinc-400">Chunks available: <span className="text-zinc-200 font-mono">{lastRequestPreview.ragChunksAvailable ?? 0}</span></div>
+                        <div className="text-zinc-400">Chunks retrieved: <span className="text-zinc-200 font-mono">{lastRequestPreview.ragChunksRetrieved ?? 0}</span></div>
+
+                        {lastRequestPreview.ragContext && (
+                          <div className="mt-3">
+                            <div className="text-zinc-400 mb-1">Context</div>
+                            <pre className="text-violet-200 bg-violet-950/20 border border-violet-900/40 rounded p-2 whitespace-pre-wrap break-words">
+                              {lastRequestPreview.ragContext}
+                            </pre>
+                          </div>
+                        )}
+
+                        <div className="mt-3">
+                          <div className="text-zinc-400 mb-1">User message (as sent)</div>
+                          <div className="bg-zinc-950/30 border border-zinc-800 rounded p-2 font-mono whitespace-pre-wrap break-words">
+                            {lastRequestPreview.userMessage}
+                          </div>
+                        </div>
+
+                        <div className="mt-3">
+                          <div className="text-zinc-400 mb-1">System prompt (as sent)</div>
+                          <div className="bg-zinc-950/30 border border-zinc-800 rounded p-2 font-mono whitespace-pre-wrap break-words">
+                            <pre className="text-zinc-200 whitespace-pre-wrap break-words">
+                              {lastSystemPromptParts?.before ?? lastRequestPreview.systemPrompt}
+                            </pre>
+                            {lastSystemPromptParts?.context && (
+                              <pre className="mt-2 text-violet-200 whitespace-pre-wrap break-words">
+                                {lastSystemPromptParts.context}
+                              </pre>
+                            )}
+                            {lastSystemPromptParts?.after && (
+                              <pre className="mt-2 text-zinc-200 whitespace-pre-wrap break-words">
+                                {lastSystemPromptParts.after}
+                              </pre>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    <div className={lastRequestPreview.useRagContext ? 'mt-3' : ''}>
+                      <div className="text-zinc-400 mb-1">Personalized prompt</div>
+                      <pre className="text-emerald-200 bg-emerald-950/15 border border-emerald-900/30 rounded p-2 whitespace-pre-wrap break-words">
+                        {lastRequestPreview.promptText}
+                      </pre>
+                    </div>
+
+                    <div className="mt-3">
+                      <div className="text-zinc-400 mb-1">Input text (until last dot/newline)</div>
+                      <pre className="text-amber-200 bg-amber-950/15 border border-amber-900/30 rounded p-2 whitespace-pre-wrap break-words">
+                        {lastRequestPreview.inputText}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-sm"><Bold size={16} /> Bold</span>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => editor.chain().focus().toggleBold().run()}
+                  className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${editor.isActive('bold') ? 'bg-blue-600' : 'bg-zinc-700'}`}
+                  title="Toggle bold"
+                >
+                  <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${editor.isActive('bold') ? 'translate-x-5' : 'translate-x-1'}`} />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-sm"><span className="text-zinc-300 font-semibold">A</span> Size</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => adjustFontSize(-2)}
+                    className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                    title="Decrease text size"
+                  >
+                    <Minus size={16} />
+                  </button>
+                  <span className="w-12 text-center text-xs font-mono text-zinc-400 select-none">{getCurrentFontSizePx()}px</span>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => adjustFontSize(2)}
+                    className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                    title="Increase text size"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-sm"><Strikethrough size={16} /> Strike</span>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => editor.chain().focus().toggleStrike().run()}
+                  className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${editor.isActive('strike') ? 'bg-blue-600' : 'bg-zinc-700'}`}
+                  title="Toggle strikethrough"
+                >
+                  <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${editor.isActive('strike') ? 'translate-x-5' : 'translate-x-1'}`} />
+                </button>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <span className="flex items-center gap-2 text-sm"><Highlighter size={16} /> Highlight</span>
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => editor.chain().focus().unsetHighlight().run()}
+                    className="px-2 py-1 text-xs bg-zinc-800 rounded border border-zinc-700 cursor-pointer hover:bg-zinc-700 transition-colors"
+                  >
+                    None
+                  </button>
+                  {['#facc15', '#4ade80', '#60a5fa', '#f472b6'].map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => editor.chain().focus().toggleHighlight({ color }).run()}
+                      className={`w-6 h-6 rounded-full border cursor-pointer hover:scale-110 transition-transform ${editor.isActive('highlight', { color }) ? 'border-white scale-110' : 'border-transparent'}`}
+                      style={{ backgroundColor: color }}
+                      title={color}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <PinAttemptLog />
+            </>
+          )}
+
         </div>
       </div>
 
@@ -2420,240 +2845,12 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
         {isLeftSidebarOpen ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
       </button>
 
-      {/* Right Sidebar - Formatting Tools */}
-      <div 
-        className={`fixed top-0 right-0 h-full bg-zinc-900 border-l border-zinc-800 transition-all duration-300 ease-in-out z-[60] ${
-          isSidebarOpen ? 'w-64' : 'w-0'
-        } overflow-hidden`}
-      >
-        <div className="p-4 w-64 h-full flex flex-col">
-          <div className="flex-1 overflow-auto pr-1 flex flex-col gap-6">
-            <h2 className="text-lg font-semibold text-zinc-400 border-b border-zinc-700 pb-2">Tools</h2>
-
-          <button
-            type="button"
-            onClick={insertStarBlock}
-            className="flex items-center justify-center px-4 py-3 bg-zinc-800 hover:bg-zinc-700 rounded text-white font-medium transition-colors cursor-pointer"
-            title="Insert ★"
-          >
-            ★
-          </button>
-
-          <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-zinc-400 flex items-center gap-2">
-                <Tag size={16} />
-                Tags
-              </span>
-              <button
-                type="button"
-                onClick={insertBookmarkTag}
-                className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs text-zinc-200 transition-colors cursor-pointer"
-                title="Insert a tag at the cursor"
-              >
-                Insert
-              </button>
-            </div>
-            {bookmarks.length === 0 ? (
-              <div className="text-xs text-zinc-500">No tags yet.</div>
-            ) : (
-              <div className="flex flex-col gap-1">
-                {bookmarks.map((b) => (
-                  <button
-                    key={b.id}
-                    type="button"
-                    onClick={() => scrollToBookmark(b.id)}
-                    className="w-full text-left px-2 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs text-zinc-200 transition-colors cursor-pointer truncate"
-                    title={`Jump to: ${b.name || b.id}`}
-                  >
-                    {b.name || b.id}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {lastRequestPreview && (
-            <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
-              <div className="text-sm text-zinc-400">Last request</div>
-
-              <div className="text-[11px] leading-relaxed text-zinc-200 bg-black/30 border border-zinc-800 rounded p-2 h-[60vh] overflow-auto whitespace-pre-wrap break-words">
-                {lastRequestPreview.useRagContext && (
-                  <>
-                    <div className="text-zinc-400">Model: <span className="text-zinc-200 font-mono">{lastRequestPreview.model}</span></div>
-                    <div className="text-zinc-400">RAG: <span className="text-green-300">enabled</span></div>
-                    <div className="text-zinc-400">Chunks available: <span className="text-zinc-200 font-mono">{lastRequestPreview.ragChunksAvailable ?? 0}</span></div>
-                    <div className="text-zinc-400">Chunks retrieved: <span className="text-zinc-200 font-mono">{lastRequestPreview.ragChunksRetrieved ?? 0}</span></div>
-
-                    {lastRequestPreview.ragContext && (
-                      <div className="mt-3">
-                        <div className="text-zinc-400 mb-1">Context</div>
-                        <pre className="text-violet-200 bg-violet-950/20 border border-violet-900/40 rounded p-2 whitespace-pre-wrap break-words">
-                          {lastRequestPreview.ragContext}
-                        </pre>
-                      </div>
-                    )}
-
-                    <div className="mt-3">
-                      <div className="text-zinc-400 mb-1">User message (as sent)</div>
-                      <div className="bg-zinc-950/30 border border-zinc-800 rounded p-2 font-mono whitespace-pre-wrap break-words">
-                        {lastRequestPreview.userMessage}
-                      </div>
-                    </div>
-
-                    <div className="mt-3">
-                      <div className="text-zinc-400 mb-1">System prompt (as sent)</div>
-                      <div className="bg-zinc-950/30 border border-zinc-800 rounded p-2 font-mono whitespace-pre-wrap break-words">
-                        <pre className="text-zinc-200 whitespace-pre-wrap break-words">
-                          {lastSystemPromptParts?.before ?? lastRequestPreview.systemPrompt}
-                        </pre>
-                        {lastSystemPromptParts?.context && (
-                          <pre className="mt-2 text-violet-200 whitespace-pre-wrap break-words">
-                            {lastSystemPromptParts.context}
-                          </pre>
-                        )}
-                        {lastSystemPromptParts?.after && (
-                          <pre className="mt-2 text-zinc-200 whitespace-pre-wrap break-words">
-                            {lastSystemPromptParts.after}
-                          </pre>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                <div className={lastRequestPreview.useRagContext ? 'mt-3' : ''}>
-                  <div className="text-zinc-400 mb-1">Personalized prompt</div>
-                  <pre className="text-emerald-200 bg-emerald-950/15 border border-emerald-900/30 rounded p-2 whitespace-pre-wrap break-words">
-                    {lastRequestPreview.promptText}
-                  </pre>
-                </div>
-
-                <div className="mt-3">
-                  <div className="text-zinc-400 mb-1">Input text (until last dot/newline)</div>
-                  <pre className="text-amber-200 bg-amber-950/15 border border-amber-900/30 rounded p-2 whitespace-pre-wrap break-words">
-                    {lastRequestPreview.inputText}
-                  </pre>
-                </div>
-              </div>
-            </div>
-          )}
-          
-          {/* Bold Control */}
-          <div className="flex items-center justify-between">
-            <span className="flex items-center gap-2 text-sm"><Bold size={16} /> Bold</span>
-            <button
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => editor.chain().focus().toggleBold().run()}
-              className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${editor.isActive('bold') ? 'bg-blue-600' : 'bg-zinc-700'}`}
-              title="Toggle bold"
-            >
-              <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${editor.isActive('bold') ? 'translate-x-5' : 'translate-x-1'}`} />
-            </button>
-          </div>
-
-          {/* Font Size Control */}
-          <div className="flex items-center justify-between">
-            <span className="flex items-center gap-2 text-sm"><span className="text-zinc-300 font-semibold">A</span> Size</span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => adjustFontSize(-2)}
-                className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
-                title="Decrease text size"
-              >
-                <Minus size={16} />
-              </button>
-              <span className="w-12 text-center text-xs font-mono text-zinc-400 select-none">{getCurrentFontSizePx()}px</span>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => adjustFontSize(2)}
-                className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
-                title="Increase text size"
-              >
-                <Plus size={16} />
-              </button>
-            </div>
-          </div>
-
-          {/* Strikethrough Control */}
-          <div className="flex items-center justify-between">
-            <span className="flex items-center gap-2 text-sm"><Strikethrough size={16} /> Strike</span>
-            <button
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => editor.chain().focus().toggleStrike().run()}
-              className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${editor.isActive('strike') ? 'bg-blue-600' : 'bg-zinc-700'}`}
-              title="Toggle strikethrough"
-            >
-              <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${editor.isActive('strike') ? 'translate-x-5' : 'translate-x-1'}`} />
-            </button>
-          </div>
-
-          {/* Highlight Control */}
-          <div className="flex flex-col gap-2">
-            <span className="flex items-center gap-2 text-sm"><Highlighter size={16} /> Highlight</span>
-            <div className="flex gap-2 flex-wrap">
-              <button
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => editor.chain().focus().unsetHighlight().run()}
-                  className="px-2 py-1 text-xs bg-zinc-800 rounded border border-zinc-700 cursor-pointer hover:bg-zinc-700 transition-colors"
-              >
-                None
-              </button>
-              {['#facc15', '#4ade80', '#60a5fa', '#f472b6'].map((color) => (
-                <button
-                  key={color}
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => editor.chain().focus().toggleHighlight({ color }).run()}
-                  className={`w-6 h-6 rounded-full border cursor-pointer hover:scale-110 transition-transform ${editor.isActive('highlight', { color }) ? 'border-white scale-110' : 'border-transparent'}`}
-                  style={{ backgroundColor: color }}
-                  title={color}
-                />
-              ))}
-            </div>
-          </div>
-          </div>
-
-          <PinAttemptLog />
-        </div>
-      </div>
-
-      {/* Right Toggle Button */}
-      <button
-        type="button"
-        ref={rightToggleRef}
-        onClick={toggleSidebar}
-        title="Toggle right panel"
-        className={`fixed top-24 z-[60] p-2 bg-zinc-800 rounded-l-md text-white transition-all duration-300 cursor-pointer hover:bg-zinc-700 ${
-          isSidebarOpen ? 'right-64 max-md:right-64' : 'right-0'
-        }`}
-      >
-        {isSidebarOpen ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
-      </button>
-
-      <button
-        type="button"
-        onClick={() => setIsModalOpen(!isChatModalOpen)}
-        title="Toggle chat panel"
-        className="fixed top-36 z-[80] p-2 bg-zinc-800 rounded-l-md text-white transition-all duration-300 cursor-pointer hover:bg-zinc-700 max-md:hidden"
-        style={{ right: isChatModalOpen ? 'min(30rem, calc(100vw - 2.5rem))' : 0 }}
-      >
-        <MessageSquare size={20} />
-      </button>
-
       {/* Mobile Sidebar Overlay */}
-      {(isLeftSidebarOpen || isSidebarOpen) && (
+      {isLeftSidebarOpen && (
         <div 
           className="sidebar-overlay md:hidden"
           onClick={() => {
             setIsLeftSidebarOpen(false);
-            setIsSidebarOpen(false);
           }}
         />
       )}
@@ -2860,13 +3057,13 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                 tabIndex={-1}
                 onMouseDown={(e) => e.preventDefault()}
                 onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                onTouchEnd={(e) => { e.preventDefault(); insertStarBlock(); }}
-                onClick={insertStarBlock}
-                className="p-3 rounded-full bg-zinc-900/95 backdrop-blur-sm text-amber-400 hover:text-amber-300 hover:bg-zinc-800 transition-all shadow-lg border border-zinc-700/50 select-none pointer-events-auto"
+                onTouchEnd={(e) => { e.preventDefault(); handleFocusHighlight(); }}
+                onClick={handleFocusHighlight}
+                className="flex h-12 w-12 items-center justify-center rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-lg hover:shadow-blue-500/25 hover:scale-105 active:scale-95 select-none pointer-events-auto"
                 style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
-                title="Insert ★"
+                title="Focus color"
               >
-                <Star size={20} />
+                <Split size={24} />
               </button>
 
               <button
@@ -2874,14 +3071,52 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                 tabIndex={-1}
                 onMouseDown={(e) => e.preventDefault()}
                 onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                onTouchEnd={(e) => { e.preventDefault(); handleFocusHighlight(); }}
-                onClick={handleFocusHighlight}
-                className="p-4 rounded-full bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-lg hover:shadow-blue-500/25 hover:scale-105 active:scale-95 select-none pointer-events-auto"
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  openMentalNoteMode();
+                }}
+                onClick={openMentalNoteMode}
+                className={`flex h-12 w-12 items-center justify-center rounded-lg bg-zinc-900/95 backdrop-blur-sm hover:bg-zinc-800 transition-all shadow-lg border select-none pointer-events-auto ${
+                  mentalNoteSelectionError
+                    ? 'mental-note-shake border-red-400 text-red-300'
+                    : didSaveMentalNote
+                      ? 'border-emerald-400 text-emerald-200'
+                      : 'border-zinc-700/50 text-emerald-300 hover:text-emerald-200'
+                }`}
                 style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
-                title="Focus color"
+                title="Save selection to mental notes"
               >
-                <Split size={24} />
+                {mentalNoteSelectionError ? <CircleAlert size={20} /> : didSaveMentalNote ? <Check size={20} /> : <BookmarkPlus size={20} />}
               </button>
+
+              <div
+                className={`pointer-events-auto overflow-hidden rounded-xl border bg-zinc-900/95 shadow-lg backdrop-blur-sm transition-all duration-300 ease-out ${
+                  isMentalNoteModeOpen
+                    ? 'max-h-14 w-52 translate-x-0 border-emerald-400/30 p-1.5 opacity-100 sm:w-56'
+                    : 'max-h-0 w-0 translate-x-3 border-transparent p-0 opacity-0'
+                }`}
+              >
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => { void saveSelectionAsMentalNote(null); }}
+                    className="rounded-lg border border-emerald-400/25 bg-emerald-950/25 px-2 py-2 text-xs font-medium text-emerald-100 hover:bg-emerald-900/35"
+                  >
+                    Random
+                  </button>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={openMentalReminder}
+                    className="rounded-lg border border-violet-400/25 bg-violet-950/25 px-2 py-2 text-xs font-medium text-violet-100 hover:bg-violet-900/35"
+                  >
+                    Reminder
+                  </button>
+                </div>
+              </div>
 
               <div className="flex items-start justify-end gap-2 pointer-events-auto">
                 <div
@@ -2905,8 +3140,12 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                             onTouchEnd={(e) => {
                               e.preventDefault();
                               applyTextColor(color);
+                              setIsTextColorPaletteOpen(false);
                             }}
-                            onClick={() => applyTextColor(color)}
+                            onClick={() => {
+                              applyTextColor(color);
+                              setIsTextColorPaletteOpen(false);
+                            }}
                             className={`h-7 w-7 shrink-0 rounded-full border shadow-sm transition-transform hover:scale-110 ${
                               editor.isActive('textStyle', { color }) ? 'scale-110 border-white' : 'border-zinc-700'
                             }`}
@@ -2923,8 +3162,53 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                         tabIndex={-1}
                         onMouseDown={(e) => e.preventDefault()}
                         onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                        onTouchEnd={(e) => { e.preventDefault(); editor.chain().focus().toggleBold().run(); }}
-                        onClick={() => editor.chain().focus().toggleBold().run()}
+                        onTouchEnd={(e) => {
+                          e.preventDefault();
+                          insertStarBlock();
+                          setIsTextColorPaletteOpen(false);
+                        }}
+                        onClick={() => {
+                          insertStarBlock();
+                          setIsTextColorPaletteOpen(false);
+                        }}
+                        className="flex h-10 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800 text-amber-400 transition-colors hover:bg-zinc-700 hover:text-amber-300"
+                        title="Insert ★"
+                      >
+                        <Star size={17} />
+                      </button>
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        onTouchEnd={(e) => {
+                          e.preventDefault();
+                          scrollToTop();
+                          setIsTextColorPaletteOpen(false);
+                        }}
+                        onClick={() => {
+                          scrollToTop();
+                          setIsTextColorPaletteOpen(false);
+                        }}
+                        className="flex h-10 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-200 transition-colors hover:bg-zinc-700 hover:text-white"
+                        title="Scroll to top"
+                      >
+                        <ArrowUp size={17} />
+                      </button>
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        onTouchEnd={(e) => {
+                          e.preventDefault();
+                          editor.chain().focus().toggleBold().run();
+                          setIsTextColorPaletteOpen(false);
+                        }}
+                        onClick={() => {
+                          editor.chain().focus().toggleBold().run();
+                          setIsTextColorPaletteOpen(false);
+                        }}
                         className={`flex h-10 items-center justify-center rounded-lg border text-sm font-semibold transition-colors ${
                           editor.isActive('bold') ? 'border-blue-500 bg-blue-600 text-white' : 'border-zinc-700 bg-zinc-800 hover:bg-zinc-700'
                         }`}
@@ -2937,8 +3221,15 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                         tabIndex={-1}
                         onMouseDown={(e) => e.preventDefault()}
                         onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                        onTouchEnd={(e) => { e.preventDefault(); editor.chain().focus().toggleStrike().run(); }}
-                        onClick={() => editor.chain().focus().toggleStrike().run()}
+                        onTouchEnd={(e) => {
+                          e.preventDefault();
+                          editor.chain().focus().toggleStrike().run();
+                          setIsTextColorPaletteOpen(false);
+                        }}
+                        onClick={() => {
+                          editor.chain().focus().toggleStrike().run();
+                          setIsTextColorPaletteOpen(false);
+                        }}
                         className={`flex h-10 items-center justify-center rounded-lg border transition-colors ${
                           editor.isActive('strike') ? 'border-blue-500 bg-blue-600 text-white' : 'border-zinc-700 bg-zinc-800 hover:bg-zinc-700'
                         }`}
@@ -2983,8 +3274,15 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                         tabIndex={-1}
                         onMouseDown={(e) => e.preventDefault()}
                         onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                        onTouchEnd={(e) => { e.preventDefault(); editor.chain().focus().unsetHighlight().run(); }}
-                        onClick={() => editor.chain().focus().unsetHighlight().run()}
+                        onTouchEnd={(e) => {
+                          e.preventDefault();
+                          editor.chain().focus().unsetHighlight().run();
+                          setIsTextColorPaletteOpen(false);
+                        }}
+                        onClick={() => {
+                          editor.chain().focus().unsetHighlight().run();
+                          setIsTextColorPaletteOpen(false);
+                        }}
                         className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 transition-colors hover:bg-zinc-700"
                         title="Remove highlight"
                       >
@@ -2997,8 +3295,15 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                           tabIndex={-1}
                           onMouseDown={(e) => e.preventDefault()}
                           onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                          onTouchEnd={(e) => { e.preventDefault(); editor.chain().focus().toggleHighlight({ color }).run(); }}
-                          onClick={() => editor.chain().focus().toggleHighlight({ color }).run()}
+                          onTouchEnd={(e) => {
+                            e.preventDefault();
+                            editor.chain().focus().toggleHighlight({ color }).run();
+                            setIsTextColorPaletteOpen(false);
+                          }}
+                          onClick={() => {
+                            editor.chain().focus().toggleHighlight({ color }).run();
+                            setIsTextColorPaletteOpen(false);
+                          }}
                           className={`h-6 w-6 shrink-0 rounded-full border transition-transform hover:scale-110 ${
                             editor.isActive('highlight', { color }) ? 'scale-110 border-white' : 'border-zinc-700'
                           }`}
@@ -3019,14 +3324,14 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                     setIsTextColorPaletteOpen(open => !open);
                   }}
                   onClick={() => setIsTextColorPaletteOpen(open => !open)}
-                  className={`p-3 rounded-full bg-zinc-900/95 backdrop-blur-sm hover:bg-zinc-800 transition-all shadow-lg border select-none ${
+                  className={`flex h-12 w-12 items-center justify-center rounded-lg bg-zinc-900/95 backdrop-blur-sm hover:bg-zinc-800 transition-all shadow-lg border select-none ${
                     isTextColorPaletteOpen ? 'border-white text-white' : 'border-zinc-700/50 text-zinc-200'
                   }`}
                   style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
-                  title="Text color"
+                  title="Tools"
                   aria-expanded={isTextColorPaletteOpen}
                 >
-                  <Palette size={20} />
+                  <ChartNoAxesCombined size={20} />
                 </button>
               </div>
 
@@ -3037,7 +3342,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                 onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
                 onTouchEnd={(e) => { e.preventDefault(); setIsModalOpen(!isChatModalOpen); }}
                 onClick={() => setIsModalOpen(!isChatModalOpen)}
-                className={`p-3 rounded-full bg-zinc-900/95 backdrop-blur-sm hover:bg-zinc-800 transition-all shadow-lg border select-none pointer-events-auto md:hidden ${
+                className={`flex h-12 w-12 items-center justify-center rounded-lg bg-zinc-900/95 backdrop-blur-sm hover:bg-zinc-800 transition-all shadow-lg border select-none pointer-events-auto ${
                   isChatModalOpen ? 'border-cyan-400 text-cyan-200' : 'border-zinc-700/50 text-zinc-200'
                 }`}
                 style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
@@ -3045,6 +3350,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
               >
                 <MessageSquare size={20} />
               </button>
+
             </div>
           )}
         </div>,
@@ -3155,6 +3461,86 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                 Add
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {isMentalReminderOpen && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl border border-violet-200/25 bg-[linear-gradient(135deg,rgba(24,24,27,0.98),rgba(46,16,101,0.9),rgba(8,47,73,0.82))] p-3 shadow-2xl sm:p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-violet-50">Set reminder</div>
+                <div className="text-xs text-violet-100/55">Saved note also joins the random queue.</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMentalReminderOpen(false)}
+                className="rounded-full border border-white/10 bg-white/5 p-2 text-violet-100 hover:bg-white/10"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="mb-3 rounded-xl border border-cyan-200/20 bg-cyan-200/10 px-3 py-2 text-center">
+              <div className="text-[11px] uppercase tracking-wide text-cyan-100/55">Current time</div>
+              <div className="font-mono text-lg font-semibold text-cyan-50">
+                {mentalReminderNow.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}
+              </div>
+            </div>
+            <div className="grid grid-cols-[1fr_0.8fr] gap-2">
+              <input
+                type="date"
+                value={mentalReminderDate}
+                min={getCurrentReminderParts().date}
+                onChange={(e) => {
+                  const next = clampReminderParts(e.target.value, mentalReminderTime);
+                  setMentalReminderDate(next.date);
+                  setMentalReminderTime(next.time);
+                }}
+                className="min-w-0 rounded-lg border border-violet-100/15 bg-black/45 px-3 py-2 text-sm text-violet-50 outline-none focus:border-violet-200/40"
+              />
+              <input
+                type="time"
+                value={mentalReminderTime}
+                onChange={(e) => setMentalReminderTime(e.target.value)}
+                onBlur={() => {
+                  const next = clampReminderParts(mentalReminderDate, mentalReminderTime);
+                  setMentalReminderDate(next.date);
+                  setMentalReminderTime(next.time);
+                }}
+                className="min-w-0 rounded-lg border border-violet-100/15 bg-black/45 px-3 py-2 text-sm text-violet-50 outline-none focus:border-violet-200/40"
+              />
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {[
+                ['2m', 2],
+                ['5m', 5],
+                ['15m', 15],
+                ['1h', 60],
+              ].map(([label, minutes]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    const d = new Date();
+                    d.setSeconds(0, 0);
+                    d.setMinutes(d.getMinutes() + Number(minutes));
+                    setMentalReminderDate(dateInputValue(d));
+                    setMentalReminderTime(timeInputValue(d));
+                  }}
+                  className="rounded-lg border border-violet-200/20 bg-violet-200/10 px-2 py-2 text-xs font-medium text-violet-50 hover:bg-violet-200/20"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={confirmMentalReminder}
+              className="mt-3 w-full rounded-lg bg-violet-100 px-4 py-2 text-sm font-semibold text-black hover:bg-violet-50"
+            >
+              Confirm reminder
+            </button>
           </div>
         </div>
       )}

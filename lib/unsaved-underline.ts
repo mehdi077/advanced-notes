@@ -14,7 +14,7 @@ function shouldShowUnsavedUnderline(): boolean {
   const { editSeq, lastSavedEditSeq, lastError } = useSaveSyncStore.getState();
   if (editSeq === lastSavedEditSeq) return false;
 
-  const locked = !unlockToken || lastError?.status === 401;
+  const locked = !unlockToken;
   const offline =
     typeof navigator !== 'undefined' &&
     (navigator.onLine === false ||
