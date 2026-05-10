@@ -208,15 +208,6 @@ function logEvent(noteId: string, eventType: string) {
   db.prepare('INSERT INTO mental_note_events (note_id, event_type, created_at) VALUES (?, ?, ?)').run(noteId, eventType, nowIso());
 }
 
-export function randomizeUnshownQueue() {
-  const rows = db.prepare(
-    `SELECT id FROM mental_notes
-     WHERE archived_at IS NULL AND remembered_at IS NULL AND last_shown_at IS NULL`
-  ).all() as Array<{ id: string }>;
-  const update = db.prepare('UPDATE mental_notes SET queue_rank = ? WHERE id = ?');
-  for (const row of rows) update.run(Math.random(), row.id);
-}
-
 export function createMentalNote(text: string, source: MentalNoteSource = 'manual'): MentalNote {
   const trimmed = text.trim();
   if (!trimmed) throw new Error('Note text is required');
@@ -227,7 +218,6 @@ export function createMentalNote(text: string, source: MentalNoteSource = 'manua
      VALUES (?, ?, ?, ?, ?, ?)`
   ).run(id, trimmed, source, Math.random(), now, now);
   logEvent(id, 'created');
-  randomizeUnshownQueue();
   return getMentalNote(id)!;
 }
 
@@ -342,9 +332,9 @@ export function getNextMentalNote(opts: { force?: boolean; remindersOnly?: boole
     const reminderAt = row.reminder_at && new Date(row.reminder_at) <= now ? null : row.reminder_at;
     db.prepare(
       `UPDATE mental_notes
-       SET last_shown_at = ?, next_eligible_at = ?, reminder_at = ?, snoozed_until = NULL, shown_count = shown_count + 1, updated_at = ?
+       SET last_shown_at = ?, next_eligible_at = ?, reminder_at = ?, snoozed_until = NULL, shown_count = shown_count + 1, queue_rank = ?, updated_at = ?
        WHERE id = ?`
-    ).run(nowText, nextEligible, reminderAt, nowText, row.id);
+    ).run(nowText, nextEligible, reminderAt, Math.random(), nowText, row.id);
     logEvent(row.id, 'shown');
     return getMentalNote(row.id);
   }).immediate();
