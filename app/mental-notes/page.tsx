@@ -139,37 +139,65 @@ function countdown(target: string | null, nowMs: number) {
 
 // ── Timeline component ──
 
-const HOUR_PX = 60;
 const TIMELINE_DAYS = 14;
+const ZOOM_MIN_PX = 10;   // px/hour at fully zoomed out
+const ZOOM_MAX_PX = 200;  // px/hour at fully zoomed in
+const ZOOM_DEFAULT = 58;  // slider 0–100, maps to ~60 px/hour
+
+function zoomToHourPx(z: number): number {
+  return Math.round(ZOOM_MIN_PX * Math.pow(ZOOM_MAX_PX / ZOOM_MIN_PX, z / 100));
+}
+
+// How many hours between each tick label given current scale.
+function tickInterval(hourPx: number): number {
+  if (hourPx >= 90) return 1;
+  if (hourPx >= 35) return 3;
+  if (hourPx >= 15) return 6;
+  if (hourPx >= 7)  return 12;
+  return 24;
+}
+
+// How many days between each date label.
+function dayInterval(hourPx: number): number {
+  if (hourPx >= 12) return 1;
+  if (hourPx >= 5)  return 2;
+  return 4;
+}
 
 type TimelineDot = { id: string; text: string; ms: number; isReminder: boolean };
 
-function Timeline({ dots, nowMs }: { dots: TimelineDot[]; nowMs: number }) {
+function Timeline({ dots, nowMs, hourPx }: { dots: TimelineDot[]; nowMs: number; hourPx: number }) {
   const totalMs = TIMELINE_DAYS * 24 * 3_600_000;
-  const totalWidth = TIMELINE_DAYS * 24 * HOUR_PX;
+  const totalWidth = TIMELINE_DAYS * 24 * hourPx;
+  const tick = tickInterval(hourPx);
+  const dayStep = dayInterval(hourPx);
 
   const dayMarks = useMemo(() => {
     const marks: { x: number; label: string }[] = [];
-    for (let h = 1; h <= TIMELINE_DAYS * 24; h++) {
+    for (let h = 0; h <= TIMELINE_DAYS * 24; h++) {
       const d = new Date(nowMs + h * 3_600_000);
       if (d.getHours() === 0) {
-        marks.push({
-          x: h * HOUR_PX,
-          label: d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }),
-        });
+        const dayIndex = Math.round(h / 24);
+        if (dayIndex % dayStep === 0) {
+          marks.push({
+            x: h * hourPx,
+            label: d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }),
+          });
+        }
       }
     }
     return marks;
-  }, [nowMs]);
+  }, [nowMs, hourPx, dayStep]);
 
   const hourMarks = useMemo(() => {
     const marks: { x: number; label: string; isDay: boolean }[] = [];
-    for (let h = 3; h <= TIMELINE_DAYS * 24; h += 3) {
+    for (let h = tick; h <= TIMELINE_DAYS * 24; h += tick) {
       const d = new Date(nowMs + h * 3_600_000);
-      marks.push({ x: h * HOUR_PX, label: d.getHours() === 0 ? '' : `${d.getHours()}h`, isDay: d.getHours() === 0 });
+      const isDay = d.getHours() === 0;
+      marks.push({ x: h * hourPx, label: isDay ? '' : `${d.getHours()}h`, isDay });
     }
     return marks;
-  }, [nowMs]);
+  }, [nowMs, hourPx, tick]);
 
   const visibleDots = dots.filter(d => d.ms > nowMs && d.ms < nowMs + totalMs);
 
@@ -210,7 +238,7 @@ function Timeline({ dots, nowMs }: { dots: TimelineDot[]; nowMs: number }) {
         <div style={{ position: 'absolute', left: 0, top: 20, height: 32 }} className="w-0.5 bg-amber-500/70" />
         {/* Dots */}
         {visibleDots.map(dot => {
-          const x = ((dot.ms - nowMs) / 3_600_000) * HOUR_PX;
+          const x = ((dot.ms - nowMs) / 3_600_000) * hourPx;
           return (
             <div
               key={dot.id}
@@ -233,6 +261,8 @@ function TimelineScheduler({ notes, config, onScheduled }: { notes: MentalNote[]
   const [draftFactor, setDraftFactor] = useState(config.frequencyFactor ?? 0.35);
   const [isDirty, setIsDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [zoom, setZoom] = useState(ZOOM_DEFAULT);
+  const hourPx = zoomToHourPx(zoom);
   const nowMs = useMemo(() => Date.now(), []);
 
   const previewSchedule = useMemo(() => computePreviewSchedule(notes, draftFactor), [notes, draftFactor]);
@@ -264,7 +294,7 @@ function TimelineScheduler({ notes, config, onScheduled }: { notes: MentalNote[]
 
   return (
     <div className="flex flex-col gap-3">
-      <Timeline dots={allDots} nowMs={nowMs} />
+      <Timeline dots={allDots} nowMs={nowMs} hourPx={hourPx} />
       <div className="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-black/40 p-3">
         <div className="flex items-center justify-between text-xs text-zinc-500">
           <span>Less frequent</span>
@@ -296,6 +326,19 @@ function TimelineScheduler({ notes, config, onScheduled }: { notes: MentalNote[]
             </button>
           </div>
         )}
+        {/* Zoom */}
+        <div className="flex items-center gap-2 border-t border-zinc-800/60 pt-2">
+          <span className="text-[11px] text-zinc-600 select-none">−</span>
+          <input
+            type="range"
+            min="0" max="100" step="1"
+            value={zoom}
+            onChange={e => setZoom(Number(e.target.value))}
+            className="flex-1 accent-zinc-500"
+          />
+          <span className="text-[11px] text-zinc-600 select-none">+</span>
+          <span className="w-12 text-right text-[10px] text-zinc-600">{hourPx}px/h</span>
+        </div>
       </div>
     </div>
   );
