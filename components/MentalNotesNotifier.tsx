@@ -1,25 +1,16 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Check, Clock3, ExternalLink, X } from 'lucide-react';
+import { Bell, Clock3, ExternalLink, X } from 'lucide-react';
 import Link from 'next/link';
 import { authFetch } from '@/lib/auth-fetch';
 
-type MentalNote = {
-  id: string;
-  text: string;
-};
+type MentalNote = { id: string; text: string };
 
 type MentalNotesConfig = {
   paused: boolean;
-  initialDelayMinMs: number;
-  initialDelayMaxMs: number;
-  betweenDelayMinMs: number;
-  betweenDelayMaxMs: number;
   visibleDurationMs: number;
   previewMaxChars: number;
-  sessionMaxEnabled: boolean;
-  sessionMaxCount: number;
   quietHoursEnabled: boolean;
   quietHoursStart: string;
   quietHoursEnd: string;
@@ -27,24 +18,12 @@ type MentalNotesConfig = {
 
 const fallbackConfig: MentalNotesConfig = {
   paused: false,
-  initialDelayMinMs: 60_000,
-  initialDelayMaxMs: 180_000,
-  betweenDelayMinMs: 8 * 60_000,
-  betweenDelayMaxMs: 25 * 60_000,
   visibleDurationMs: 60_000,
   previewMaxChars: 220,
-  sessionMaxEnabled: false,
-  sessionMaxCount: 5,
   quietHoursEnabled: false,
   quietHoursStart: '22:00',
   quietHoursEnd: '08:00',
 };
-
-function randomBetween(min: number, max: number) {
-  const lo = Math.max(0, Math.min(min, max));
-  const hi = Math.max(lo, max);
-  return lo + Math.floor(Math.random() * (hi - lo + 1));
-}
 
 function preview(text: string, maxChars: number) {
   const max = Math.max(40, maxChars || fallbackConfig.previewMaxChars);
@@ -52,7 +31,7 @@ function preview(text: string, maxChars: number) {
   return `${text.slice(0, max).trimEnd()}...`;
 }
 
-// Quiet hours evaluated client-side so it uses the user's local timezone, not the server's.
+// Quiet hours evaluated client-side so it respects the user's local timezone.
 function isQuietNow(cfg: MentalNotesConfig): boolean {
   if (!cfg.quietHoursEnabled) return false;
   const now = new Date();
@@ -66,48 +45,32 @@ function isQuietNow(cfg: MentalNotesConfig): boolean {
   return minutes >= start || minutes < end;
 }
 
-function msUntilQuietHoursEnd(cfg: MentalNotesConfig): number {
-  const now = new Date();
-  const [eH, eM] = cfg.quietHoursEnd.split(':').map(Number);
-  const end = new Date(now);
-  end.setHours(eH ?? 8, eM ?? 0, 0, 0);
-  if (end <= now) end.setDate(end.getDate() + 1);
-  return Math.max(60_000, end.getTime() - now.getTime());
+function tomorrowAt(hour: number): number {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(hour, 0, 0, 0);
+  return d.getTime() - Date.now();
 }
 
-// Shared daily shown-count across all tabs via localStorage.
-const COUNT_KEY = 'advanced-notes.mn.count';
-const COUNT_DATE_KEY = 'advanced-notes.mn.count.date';
-
-function readSharedCount(): number {
-  try {
-    if (localStorage.getItem(COUNT_DATE_KEY) !== new Date().toDateString()) return 0;
-    return parseInt(localStorage.getItem(COUNT_KEY) ?? '0', 10) || 0;
-  } catch {
-    return 0;
-  }
-}
-
-function incrementSharedCount(): void {
-  try {
-    const today = new Date().toDateString();
-    localStorage.setItem(COUNT_DATE_KEY, today);
-    localStorage.setItem(COUNT_KEY, String(readSharedCount() + 1));
-  } catch {}
-}
+const REMIND_OPTIONS = [
+  { label: '30m', ms: () => 30 * 60_000 },
+  { label: '1h', ms: () => 60 * 60_000 },
+  { label: '3h', ms: () => 3 * 60 * 60_000 },
+  { label: '8h', ms: () => 8 * 60 * 60_000 },
+  { label: 'Tomorrow 9am', ms: () => tomorrowAt(9) },
+];
 
 export default function MentalNotesNotifier() {
   const [note, setNote] = useState<MentalNote | null>(null);
   const [config, setConfig] = useState<MentalNotesConfig>(fallbackConfig);
   const [dismissAt, setDismissAt] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const configRef = useRef<MentalNotesConfig>(fallbackConfig);
+  const [reminderOpen, setReminderOpen] = useState(false);
+
   const noteRef = useRef<MentalNote | null>(null);
-  const scheduleRef = useRef<number | null>(null);
+  const configRef = useRef<MentalNotesConfig>(fallbackConfig);
   const hideRef = useRef<number | null>(null);
-  const reminderPollRef = useRef<number | null>(null);
-  // Exposes schedule() to dismiss() which lives outside the effect closure.
-  const scheduleCallbackRef = useRef<((cfg: MentalNotesConfig, first?: boolean) => void) | null>(null);
+  const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,92 +78,39 @@ export default function MentalNotesNotifier() {
     const canShow = () => {
       if (document.visibilityState !== 'visible') return false;
       if (document.hasFocus()) return true;
-      // hasFocus() returns false on iOS Safari when a child element has focus.
       const active = document.activeElement;
       if (active && active !== document.body && document.body.contains(active)) return true;
-      // On touch-primary devices visibility alone is the right signal —
-      // the browser is in the foreground if and only if the page is visible.
       if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) return true;
       return false;
     };
 
-    const clearTimers = () => {
-      if (scheduleRef.current) window.clearTimeout(scheduleRef.current);
+    const showNote = (incoming: MentalNote, cfg: MentalNotesConfig) => {
+      noteRef.current = incoming;
+      setNote(incoming);
+      setReminderOpen(false);
       if (hideRef.current) window.clearTimeout(hideRef.current);
-      if (reminderPollRef.current) window.clearInterval(reminderPollRef.current);
-      scheduleRef.current = null;
-      hideRef.current = null;
-      reminderPollRef.current = null;
+      setDismissAt(Date.now() + cfg.visibleDurationMs);
+      hideRef.current = window.setTimeout(() => {
+        noteRef.current = null;
+        setNote(null);
+        setDismissAt(null);
+        setReminderOpen(false);
+      }, cfg.visibleDurationMs);
     };
 
-    const schedule = (cfg: MentalNotesConfig, first = false) => {
-      if (cancelled || cfg.paused) return;
-      if (cfg.sessionMaxEnabled && readSharedCount() >= cfg.sessionMaxCount) return;
-      if (scheduleRef.current) window.clearTimeout(scheduleRef.current);
-      if (isQuietNow(cfg)) {
-        // Sleep until quiet hours end rather than burning polling cycles returning null.
-        scheduleRef.current = window.setTimeout(() => void fetchNext(), msUntilQuietHoursEnd(cfg) + 5_000);
-        return;
-      }
-      const delay = first
-        ? randomBetween(cfg.initialDelayMinMs, cfg.initialDelayMaxMs)
-        : randomBetween(cfg.betweenDelayMinMs, cfg.betweenDelayMaxMs);
-      scheduleRef.current = window.setTimeout(() => void fetchNext(), delay);
-    };
-    scheduleCallbackRef.current = schedule;
-
-    const hideAndSchedule = (cfg: MentalNotesConfig) => {
-      noteRef.current = null;
-      setNote(null);
-      setDismissAt(null);
-      if (hideRef.current) window.clearTimeout(hideRef.current);
-      hideRef.current = null;
-      schedule(cfg);
-    };
-
-    const fetchNext = async (remindersOnly = false) => {
+    const fetchNote = async (remindersOnly = false) => {
       if (!canShow()) return;
-      // Don't let the regular schedule overwrite a currently-visible note
-      // (reminder poll may have already fired and shown something).
       if (!remindersOnly && noteRef.current) return;
+      if (!remindersOnly && isQuietNow(configRef.current)) return;
       try {
         const res = await authFetch(`/api/mental-notes?action=next${remindersOnly ? '&remindersOnly=1' : ''}`);
-        if (!res.ok) {
-          if (!remindersOnly) schedule(configRef.current);
-          return;
-        }
+        if (!res.ok) return;
         const data = (await res.json().catch(() => ({}))) as { note?: MentalNote | null; config?: MentalNotesConfig };
-        const nextConfig = data.config || configRef.current;
-        configRef.current = nextConfig;
-        setConfig(nextConfig);
-        if (!data.note) {
-          if (!remindersOnly) schedule(nextConfig);
-          return;
-        }
-        // Reminders are user-set, so they don't count against the daily session max.
-        if (!remindersOnly) incrementSharedCount();
-        noteRef.current = data.note;
-        setNote(data.note);
-        if (hideRef.current) window.clearTimeout(hideRef.current);
-        setDismissAt(Date.now() + nextConfig.visibleDurationMs);
-        hideRef.current = window.setTimeout(() => hideAndSchedule(nextConfig), nextConfig.visibleDurationMs);
-      } catch {
-        if (!remindersOnly) schedule(configRef.current);
-      }
-    };
-
-    let debounceTimer: number | null = null;
-    const fetchDueReminderNow = () => {
-      if (cancelled || noteRef.current || !canShow()) return;
-      void fetchNext(true);
-    };
-    // Debounced so rapid keydown/pointerdown bursts collapse into one request.
-    const fetchDueReminderSoon = () => {
-      if (debounceTimer !== null) window.clearTimeout(debounceTimer);
-      debounceTimer = window.setTimeout(() => {
-        debounceTimer = null;
-        fetchDueReminderNow();
-      }, 500);
+        const cfg = data.config || configRef.current;
+        configRef.current = cfg;
+        setConfig(cfg);
+        if (data.note) showNote(data.note, cfg);
+      } catch {}
     };
 
     const boot = async () => {
@@ -211,33 +121,27 @@ export default function MentalNotesNotifier() {
         const cfg = data.config || fallbackConfig;
         configRef.current = cfg;
         setConfig(cfg);
-        schedule(cfg, true);
-        window.setTimeout(fetchDueReminderNow, 250);
-      } catch {
-        schedule(fallbackConfig, true);
-        window.setTimeout(fetchDueReminderNow, 250);
+      } catch {}
+      if (!cancelled) {
+        void fetchNote();
+        pollRef.current = window.setInterval(() => void fetchNote(), 60_000);
       }
     };
 
     void boot();
-    reminderPollRef.current = window.setInterval(fetchDueReminderNow, 10_000);
-    document.addEventListener('visibilitychange', fetchDueReminderSoon);
-    document.addEventListener('focusin', fetchDueReminderSoon);
-    document.addEventListener('pointerdown', fetchDueReminderSoon, { passive: true });
-    document.addEventListener('keydown', fetchDueReminderSoon);
-    window.addEventListener('focus', fetchDueReminderSoon);
-    window.addEventListener('pageshow', fetchDueReminderSoon);
+
+    const onActivity = () => void fetchNote(true);
+    document.addEventListener('visibilitychange', onActivity);
+    window.addEventListener('focus', onActivity);
+    window.addEventListener('pageshow', onActivity);
+
     return () => {
       cancelled = true;
-      if (debounceTimer !== null) window.clearTimeout(debounceTimer);
-      scheduleCallbackRef.current = null;
-      document.removeEventListener('visibilitychange', fetchDueReminderSoon);
-      document.removeEventListener('focusin', fetchDueReminderSoon);
-      document.removeEventListener('pointerdown', fetchDueReminderSoon);
-      document.removeEventListener('keydown', fetchDueReminderSoon);
-      window.removeEventListener('focus', fetchDueReminderSoon);
-      window.removeEventListener('pageshow', fetchDueReminderSoon);
-      clearTimers();
+      if (pollRef.current) window.clearInterval(pollRef.current);
+      if (hideRef.current) window.clearTimeout(hideRef.current);
+      document.removeEventListener('visibilitychange', onActivity);
+      window.removeEventListener('focus', onActivity);
+      window.removeEventListener('pageshow', onActivity);
     };
   }, []);
 
@@ -253,7 +157,7 @@ export default function MentalNotesNotifier() {
     hideRef.current = null;
     setDismissAt(null);
     setNote(null);
-    scheduleCallbackRef.current?.(configRef.current);
+    setReminderOpen(false);
   };
 
   const snooze = async () => {
@@ -266,12 +170,12 @@ export default function MentalNotesNotifier() {
     dismiss();
   };
 
-  const remember = async () => {
+  const remindLater = async (ms: number) => {
     if (!note) return;
     await authFetch('/api/mental-notes', {
-      method: 'POST',
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'remember', id: note.id }),
+      body: JSON.stringify({ id: note.id, reminderAt: new Date(Date.now() + ms).toISOString() }),
     }).catch(() => {});
     dismiss();
   };
@@ -286,7 +190,7 @@ export default function MentalNotesNotifier() {
           type="button"
           onClick={dismiss}
           className="mt-0.5 rounded-full border border-amber-100/25 bg-amber-100/10 p-1.5 text-amber-100 hover:bg-amber-100/20 hover:text-white"
-          title="Close"
+          title="Dismiss"
         >
           <X size={15} />
         </button>
@@ -299,17 +203,45 @@ export default function MentalNotesNotifier() {
               {secondsLeft}s
             </div>
           )}
-          <button type="button" onClick={snooze} className="rounded-full border border-cyan-200/25 bg-cyan-200/10 p-2 text-cyan-100 hover:bg-cyan-200/20 hover:text-white" title="Snooze">
+          <button
+            type="button"
+            onClick={snooze}
+            className="rounded-full border border-cyan-200/25 bg-cyan-200/10 p-2 text-cyan-100 hover:bg-cyan-200/20 hover:text-white"
+            title="Snooze"
+          >
             <Clock3 size={16} />
           </button>
-          <button type="button" onClick={remember} className="rounded-full border border-lime-200/25 bg-lime-200/10 p-2 text-lime-100 hover:bg-lime-200/20 hover:text-white" title="Remembered">
-            <Check size={16} />
+          <button
+            type="button"
+            onClick={() => setReminderOpen(v => !v)}
+            className={`rounded-full border p-2 transition-colors ${reminderOpen ? 'border-violet-300/40 bg-violet-400/20 text-violet-50' : 'border-violet-200/25 bg-violet-200/10 text-violet-100 hover:bg-violet-200/20 hover:text-white'}`}
+            title="Remind me later"
+          >
+            <Bell size={16} />
           </button>
-          <Link href="/mental-notes" className="rounded-full border border-rose-100/25 bg-rose-100/10 p-2 text-rose-50 hover:bg-rose-100/20 hover:text-white" title="Open">
+          <Link
+            href="/mental-notes"
+            className="rounded-full border border-rose-100/25 bg-rose-100/10 p-2 text-rose-50 hover:bg-rose-100/20 hover:text-white"
+            title="Open"
+          >
             <ExternalLink size={16} />
           </Link>
         </div>
       </div>
+      {reminderOpen && (
+        <div className="mt-2.5 flex flex-wrap gap-1.5 border-t border-white/10 pt-2.5">
+          {REMIND_OPTIONS.map(opt => (
+            <button
+              key={opt.label}
+              type="button"
+              onClick={() => void remindLater(opt.ms())}
+              className="rounded-lg border border-violet-300/30 bg-violet-900/30 px-3 py-1.5 text-sm text-violet-100 hover:bg-violet-900/50"
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

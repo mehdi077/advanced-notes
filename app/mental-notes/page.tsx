@@ -11,8 +11,6 @@ import {
   Play,
   Plus,
   RefreshCw,
-  Settings2,
-  Shuffle,
   X,
 } from 'lucide-react';
 import { authFetch } from '@/lib/auth-fetch';
@@ -28,9 +26,7 @@ type MentalNote = {
   nextEligibleAt: string | null;
   reminderAt: string | null;
   snoozedUntil: string | null;
-  rememberedAt: string | null;
   archivedAt: string | null;
-  customCooldownMs: number | null;
   shownCount: number;
   status: string;
   readyAt: string | null;
@@ -38,17 +34,10 @@ type MentalNote = {
 
 type Config = {
   paused: boolean;
-  initialDelayMinMs: number;
-  initialDelayMaxMs: number;
-  betweenDelayMinMs: number;
-  betweenDelayMaxMs: number;
+  frequencyFactor: number;
   visibleDurationMs: number;
-  cooldownMs: number;
   snoozeMs: number;
-  rememberedCooldownMs: number;
   previewMaxChars: number;
-  sessionMaxEnabled: boolean;
-  sessionMaxCount: number;
   quietHoursEnabled: boolean;
   quietHoursStart: string;
   quietHoursEnd: string;
@@ -56,81 +45,84 @@ type Config = {
 
 const statusTone: Record<string, string> = {
   New: 'border-sky-500/40 text-sky-200 bg-sky-950/20',
+  Scheduled: 'border-blue-500/40 text-blue-200 bg-blue-950/20',
   Ready: 'border-emerald-500/40 text-emerald-200 bg-emerald-950/20',
-  Cooldown: 'border-zinc-600 text-zinc-300 bg-zinc-900',
   Snoozed: 'border-amber-500/40 text-amber-200 bg-amber-950/20',
   'Reminder set': 'border-violet-500/40 text-violet-200 bg-violet-950/20',
   'Reminder due': 'border-fuchsia-500/50 text-fuchsia-200 bg-fuchsia-950/25',
-  Remembered: 'border-green-500/40 text-green-200 bg-green-950/20',
   Archived: 'border-zinc-700 text-zinc-500 bg-zinc-950',
 };
 
-function msToMinutes(ms: number) {
-  return Math.round(ms / 60_000);
+// ── Scheduling helpers (mirrors lib/mental-notes.ts, runs client-side for preview) ──
+
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * Math.max(0, Math.min(1, t));
 }
 
-function minutesToMs(minutes: number) {
-  return Math.max(0, Math.round(minutes * 60_000));
+function spacingFor(f: number) {
+  return {
+    minMs: lerp(24 * 3_600_000, 1 * 3_600_000, f),
+    maxMs: lerp(72 * 3_600_000, 3 * 3_600_000, f),
+  };
 }
 
-function msToSeconds(ms: number) {
-  return Math.round(ms / 1000);
+function stableJitter(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (Math.imul(31, h) + id.charCodeAt(i)) | 0;
+  return Math.abs(h % 100_000) / 100_000;
 }
 
-function secondsToMs(seconds: number) {
-  return Math.max(0, Math.round(seconds * 1000));
+function computePreviewSchedule(notes: MentalNote[], factor: number): Array<MentalNote & { scheduledMs: number }> {
+  const eligible = notes
+    .filter(n => !n.reminderAt && !n.archivedAt)
+    .sort((a, b) => a.queueRank - b.queueRank);
+  const { minMs, maxMs } = spacingFor(factor);
+  let t = Date.now();
+  return eligible.map(note => {
+    t += minMs + stableJitter(note.id) * (maxMs - minMs);
+    return { ...note, scheduledMs: t };
+  });
 }
 
-function msToDays(ms: number) {
-  return Math.round(ms / 86_400_000);
-}
+// ── Formatting ──
 
-function daysToMs(days: number) {
-  return Math.max(0, Math.round(days * 86_400_000));
-}
+function msToSeconds(ms: number) { return Math.round(ms / 1000); }
+function secondsToMs(s: number) { return Math.max(0, Math.round(s * 1000)); }
+function msToMinutes(ms: number) { return Math.round(ms / 60_000); }
+function minutesToMs(m: number) { return Math.max(0, Math.round(m * 60_000)); }
 
 function dateInputValue(iso: string | null) {
   const d = iso ? new Date(iso) : new Date();
-  const valid = Number.isNaN(d.getTime()) ? new Date() : d;
+  const v = Number.isNaN(d.getTime()) ? new Date() : d;
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${valid.getFullYear()}-${pad(valid.getMonth() + 1)}-${pad(valid.getDate())}`;
+  return `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}`;
 }
 
 function timeInputValue(iso: string | null) {
   const d = iso ? new Date(iso) : new Date();
-  const valid = Number.isNaN(d.getTime()) ? new Date() : d;
+  const v = Number.isNaN(d.getTime()) ? new Date() : d;
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(valid.getHours())}:${pad(valid.getMinutes())}`;
+  return `${pad(v.getHours())}:${pad(v.getMinutes())}`;
 }
 
-function currentDateInput() {
-  return dateInputValue(null);
-}
+function currentDateInput() { return dateInputValue(null); }
 
 function clampReminderParts(dateValue: string, timeValue: string) {
-  const now = new Date();
-  now.setSeconds(0, 0);
+  const now = new Date(); now.setSeconds(0, 0);
   const next = new Date(`${dateValue}T${timeValue}`);
   const valid = Number.isNaN(next.getTime()) ? now : next;
   const clamped = valid < now ? now : valid;
-  return {
-    date: dateInputValue(clamped.toISOString()),
-    time: timeInputValue(clamped.toISOString()),
-    iso: clamped.toISOString(),
-  };
+  return { date: dateInputValue(clamped.toISOString()), time: timeInputValue(clamped.toISOString()), iso: clamped.toISOString() };
 }
 
 function isPastReminderParts(dateValue: string, timeValue: string) {
-  const now = new Date();
-  now.setSeconds(0, 0);
+  const now = new Date(); now.setSeconds(0, 0);
   const next = new Date(`${dateValue}T${timeValue}`);
   return Number.isFinite(next.getTime()) && next < now;
 }
 
 function futureIso(minutes: number) {
-  const d = new Date();
-  d.setSeconds(0, 0);
-  d.setMinutes(d.getMinutes() + minutes);
+  const d = new Date(); d.setSeconds(0, 0); d.setMinutes(d.getMinutes() + minutes);
   return d.toISOString();
 }
 
@@ -138,22 +130,185 @@ function countdown(target: string | null, nowMs: number) {
   if (!target) return 'ready';
   let diff = new Date(target).getTime() - nowMs;
   if (!Number.isFinite(diff) || diff <= 0) return 'ready';
-  const days = Math.floor(diff / 86_400_000);
-  diff -= days * 86_400_000;
-  const hours = Math.floor(diff / 3_600_000);
-  diff -= hours * 3_600_000;
-  const minutes = Math.floor(diff / 60_000);
-  diff -= minutes * 60_000;
+  const days = Math.floor(diff / 86_400_000); diff -= days * 86_400_000;
+  const hours = Math.floor(diff / 3_600_000); diff -= hours * 3_600_000;
+  const minutes = Math.floor(diff / 60_000); diff -= minutes * 60_000;
   const seconds = Math.floor(diff / 1000);
   return `${days}d ${hours}h ${minutes}m ${seconds}s`;
 }
+
+// ── Timeline component ──
+
+const HOUR_PX = 60;
+const TIMELINE_DAYS = 14;
+
+type TimelineDot = { id: string; text: string; ms: number; isReminder: boolean };
+
+function Timeline({ dots, nowMs }: { dots: TimelineDot[]; nowMs: number }) {
+  const totalMs = TIMELINE_DAYS * 24 * 3_600_000;
+  const totalWidth = TIMELINE_DAYS * 24 * HOUR_PX;
+
+  const dayMarks = useMemo(() => {
+    const marks: { x: number; label: string }[] = [];
+    for (let h = 1; h <= TIMELINE_DAYS * 24; h++) {
+      const d = new Date(nowMs + h * 3_600_000);
+      if (d.getHours() === 0) {
+        marks.push({
+          x: h * HOUR_PX,
+          label: d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }),
+        });
+      }
+    }
+    return marks;
+  }, [nowMs]);
+
+  const hourMarks = useMemo(() => {
+    const marks: { x: number; label: string; isDay: boolean }[] = [];
+    for (let h = 3; h <= TIMELINE_DAYS * 24; h += 3) {
+      const d = new Date(nowMs + h * 3_600_000);
+      marks.push({ x: h * HOUR_PX, label: d.getHours() === 0 ? '' : `${d.getHours()}h`, isDay: d.getHours() === 0 });
+    }
+    return marks;
+  }, [nowMs]);
+
+  const visibleDots = dots.filter(d => d.ms > nowMs && d.ms < nowMs + totalMs);
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-black/60">
+      <div style={{ width: totalWidth, position: 'relative', height: 72 }}>
+        {/* Day labels */}
+        {dayMarks.map(m => (
+          <div
+            key={m.x}
+            style={{ position: 'absolute', left: m.x, top: 4, transform: 'translateX(-50%)' }}
+            className="whitespace-nowrap text-[10px] text-zinc-400"
+          >
+            {m.label}
+          </div>
+        ))}
+        {/* Hour tick lines */}
+        {hourMarks.map(m => (
+          <div
+            key={m.x}
+            style={{ position: 'absolute', left: m.x, top: 20, height: 32 }}
+            className={`w-px ${m.isDay ? 'bg-zinc-700' : 'bg-zinc-800/70'}`}
+          />
+        ))}
+        {/* Hour labels */}
+        {hourMarks.filter(m => m.label).map(m => (
+          <div
+            key={`lbl-${m.x}`}
+            style={{ position: 'absolute', left: m.x, bottom: 5, transform: 'translateX(-50%)' }}
+            className="text-[9px] text-zinc-600"
+          >
+            {m.label}
+          </div>
+        ))}
+        {/* Baseline */}
+        <div style={{ position: 'absolute', left: 0, right: 0, top: 36 }} className="h-px bg-zinc-800" />
+        {/* Now marker */}
+        <div style={{ position: 'absolute', left: 0, top: 20, height: 32 }} className="w-0.5 bg-amber-500/70" />
+        {/* Dots */}
+        {visibleDots.map(dot => {
+          const x = ((dot.ms - nowMs) / 3_600_000) * HOUR_PX;
+          return (
+            <div
+              key={dot.id}
+              title={dot.text.length > 80 ? `${dot.text.slice(0, 80)}…` : dot.text}
+              style={{ position: 'absolute', left: x, top: 36, transform: 'translate(-50%, -50%)' }}
+              className={`h-2.5 w-2.5 rounded-full border transition-all ${
+                dot.isReminder
+                  ? 'border-violet-400 bg-violet-500'
+                  : 'border-amber-400/80 bg-amber-500'
+              }`}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TimelineScheduler({ notes, config, onScheduled }: { notes: MentalNote[]; config: Config; onScheduled: () => void }) {
+  const [draftFactor, setDraftFactor] = useState(config.frequencyFactor ?? 0.35);
+  const [isDirty, setIsDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const nowMs = useMemo(() => Date.now(), []);
+
+  const previewSchedule = useMemo(() => computePreviewSchedule(notes, draftFactor), [notes, draftFactor]);
+  const reminderDots: TimelineDot[] = useMemo(() =>
+    notes
+      .filter(n => n.reminderAt && !n.archivedAt)
+      .map(n => ({ id: n.id, text: n.text, ms: new Date(n.reminderAt!).getTime(), isReminder: true })),
+    [notes]
+  );
+
+  const allDots: TimelineDot[] = useMemo(() => [
+    ...previewSchedule.map(n => ({ id: n.id, text: n.text, ms: n.scheduledMs, isReminder: false })),
+    ...reminderDots,
+  ], [previewSchedule, reminderDots]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    await authFetch('/api/mental-notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'schedule', frequencyFactor: draftFactor }),
+    });
+    setSaving(false);
+    setIsDirty(false);
+    onScheduled();
+  };
+
+  const visibleCount = previewSchedule.filter(n => n.scheduledMs > nowMs && n.scheduledMs < nowMs + TIMELINE_DAYS * 24 * 3_600_000).length;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Timeline dots={allDots} nowMs={nowMs} />
+      <div className="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-black/40 p-3">
+        <div className="flex items-center justify-between text-xs text-zinc-500">
+          <span>Less frequent</span>
+          <span className="text-zinc-400">
+            {visibleCount} note{visibleCount !== 1 ? 's' : ''} in next {TIMELINE_DAYS} days
+            {reminderDots.length > 0 && (
+              <span className="ml-1.5 text-violet-400">· {reminderDots.length} reminder{reminderDots.length !== 1 ? 's' : ''}</span>
+            )}
+          </span>
+          <span>More frequent</span>
+        </div>
+        <input
+          type="range"
+          min="0" max="1" step="0.01"
+          value={draftFactor}
+          onChange={e => { setDraftFactor(Number(e.target.value)); setIsDirty(true); }}
+          className="w-full accent-amber-400"
+        />
+        {isDirty && (
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-amber-400/70">Preview — click save to apply</span>
+            <button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={saving}
+              className="rounded-lg border border-amber-300/30 bg-amber-950/40 px-4 py-1.5 text-sm text-amber-100 hover:bg-amber-950/60 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save schedule'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main page ──
 
 export default function MentalNotesPage() {
   const [notes, setNotes] = useState<MentalNote[]>([]);
   const [config, setConfig] = useState<Config | null>(null);
   const [filter, setFilter] = useState('active');
   const [sort, setSort] = useState('queue');
-  const [noteView, setNoteView] = useState<'active' | 'ready' | 'reminders' | 'cooldown' | 'archived' | 'all'>('active');
+  const [noteView, setNoteView] = useState<'active' | 'scheduled' | 'ready' | 'reminders' | 'snoozed' | 'archived' | 'all'>('active');
   const [newText, setNewText] = useState('');
   const [activeTab, setActiveTab] = useState<'notes' | 'config'>('notes');
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
@@ -168,10 +323,7 @@ export default function MentalNotesPage() {
     setConfig(data.config);
   }, [filter, sort]);
 
-  useEffect(() => {
-    void Promise.resolve().then(load);
-  }, [load]);
-
+  useEffect(() => { void Promise.resolve().then(load); }, [load]);
   useEffect(() => {
     const t = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(t);
@@ -205,7 +357,7 @@ export default function MentalNotesPage() {
     setIsNewModalOpen(false);
   };
 
-  const updateNote = async (note: MentalNote, patch: Partial<{ text: string; reminderAt: string | null; customCooldownMs: number | null }>) => {
+  const updateNote = async (note: MentalNote, patch: Partial<{ text: string; reminderAt: string | null }>) => {
     const res = await authFetch('/api/mental-notes', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -236,13 +388,14 @@ export default function MentalNotesPage() {
     await load();
   };
 
-  const orderedNotes = useMemo(() => notes, [notes]);
   const visibleNotes = useMemo(() => {
-    if (noteView === 'ready') return orderedNotes.filter(note => note.status === 'Ready' || note.status === 'New');
-    if (noteView === 'reminders') return orderedNotes.filter(note => note.status === 'Reminder set' || note.status === 'Reminder due');
-    if (noteView === 'cooldown') return orderedNotes.filter(note => note.status === 'Cooldown' || note.status === 'Snoozed' || note.status === 'Remembered');
-    return orderedNotes;
-  }, [noteView, orderedNotes]);
+    if (noteView === 'scheduled') return notes.filter(n => n.status === 'Scheduled');
+    if (noteView === 'ready') return notes.filter(n => n.status === 'Ready' || n.status === 'New');
+    if (noteView === 'reminders') return notes.filter(n => n.status === 'Reminder set' || n.status === 'Reminder due');
+    if (noteView === 'snoozed') return notes.filter(n => n.status === 'Snoozed');
+    return notes;
+  }, [noteView, notes]);
+
   const setView = (view: typeof noteView) => {
     setNoteView(view);
     if (view === 'archived') setFilter('archived');
@@ -264,21 +417,15 @@ export default function MentalNotesPage() {
               <RefreshCw size={16} />
             </button>
           </div>
-
           <div className="mt-3 grid grid-cols-2 gap-1 rounded-lg border border-zinc-800 bg-zinc-950 p-1">
-            {[
-              ['notes', 'Notes'],
-              ['config', 'Config'],
-            ].map(([id, label]) => (
+            {(['notes', 'config'] as const).map(id => (
               <button
                 key={id}
                 type="button"
-                onClick={() => setActiveTab(id as 'notes' | 'config')}
-                className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                  activeTab === id ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200'
-                }`}
+                onClick={() => setActiveTab(id)}
+                className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${activeTab === id ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200'}`}
               >
-                {label}
+                {id === 'notes' ? 'Notes' : 'Schedule'}
               </button>
             ))}
           </div>
@@ -286,51 +433,53 @@ export default function MentalNotesPage() {
 
         {config && activeTab === 'config' && (
           <section className="flex flex-col gap-3">
+            {/* Timeline scheduler */}
             <div className="rounded-xl border border-amber-300/20 bg-[linear-gradient(135deg,rgba(69,26,3,0.45),rgba(76,5,25,0.35),rgba(8,47,73,0.35))] p-3 shadow-xl md:p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-amber-50">Delivery</div>
-                  <div className="text-xs text-amber-100/55">When notes appear after you visit or between reminders.</div>
+                  <div className="text-sm font-semibold text-amber-50">Delivery schedule</div>
+                  <div className="text-xs text-amber-100/55">Drag the slider to adjust frequency, then save. Violet dots are reminders.</div>
                 </div>
-                <button type="button" onClick={showNextNow} className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-cyan-200/25 bg-cyan-200/10 px-3 py-2 text-sm text-cyan-100 hover:bg-cyan-200/20">
-                  <Bell size={16} />
-                  Test
-                </button>
+                <div className="flex gap-2">
+                  <button type="button" onClick={showNextNow} className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-cyan-200/25 bg-cyan-200/10 px-3 py-2 text-sm text-cyan-100 hover:bg-cyan-200/20">
+                    <Bell size={16} />
+                    Test
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => saveConfig({ paused: !config.paused })}
+                    className={`inline-flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-sm ${config.paused ? 'border-amber-400/40 bg-amber-950/30 text-amber-100' : 'border-zinc-700 bg-zinc-900/50 text-zinc-300'}`}
+                  >
+                    {config.paused ? <><Pause size={15} /> Paused</> : <><Play size={15} /> Active</>}
+                  </button>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                <ToggleField label="Paused" checked={config.paused} onChange={(v) => saveConfig({ paused: v })} icon={config.paused ? <Pause size={15} /> : <Play size={15} />} />
-                <NumberField label="First min" value={msToSeconds(config.initialDelayMinMs)} unit="s" onSave={(v) => saveConfig({ initialDelayMinMs: secondsToMs(v) })} />
-                <NumberField label="First max" value={msToSeconds(config.initialDelayMaxMs)} unit="s" onSave={(v) => saveConfig({ initialDelayMaxMs: secondsToMs(v) })} />
-                <NumberField label="Visible" value={msToSeconds(config.visibleDurationMs)} unit="s" onSave={(v) => saveConfig({ visibleDurationMs: secondsToMs(v) })} />
-                <NumberField label="Between min" value={msToSeconds(config.betweenDelayMinMs)} unit="s" onSave={(v) => saveConfig({ betweenDelayMinMs: secondsToMs(v) })} />
-                <NumberField label="Between max" value={msToSeconds(config.betweenDelayMaxMs)} unit="s" onSave={(v) => saveConfig({ betweenDelayMaxMs: secondsToMs(v) })} />
-                <NumberField label="Preview" value={config.previewMaxChars} onSave={(v) => saveConfig({ previewMaxChars: v })} />
-              </div>
+              <TimelineScheduler notes={notes.filter(n => !n.archivedAt)} config={config} onScheduled={() => void load()} />
             </div>
 
+            {/* After actions */}
             <div className="rounded-xl border border-lime-300/15 bg-lime-950/10 p-3 md:p-4">
               <div className="mb-3">
                 <div className="text-sm font-semibold text-lime-100">After actions</div>
-                <div className="text-xs text-lime-100/45">Cooldowns after a note appears, gets snoozed, or is marked remembered.</div>
+                <div className="text-xs text-lime-100/45">How long a note stays hidden after snooze, and how long notes stay visible.</div>
               </div>
               <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                <NumberField label="Cooldown" value={msToDays(config.cooldownMs)} unit="d" onSave={(v) => saveConfig({ cooldownMs: daysToMs(v) })} />
-                <NumberField label="Snooze" value={msToMinutes(config.snoozeMs)} unit="m" onSave={(v) => saveConfig({ snoozeMs: minutesToMs(v) })} />
-                <NumberField label="Remembered" value={msToDays(config.rememberedCooldownMs)} unit="d" onSave={(v) => saveConfig({ rememberedCooldownMs: daysToMs(v) })} />
+                <NumberField label="Snooze" value={msToMinutes(config.snoozeMs)} unit="m" onSave={v => saveConfig({ snoozeMs: minutesToMs(v) })} />
+                <NumberField label="Visible" value={msToSeconds(config.visibleDurationMs)} unit="s" onSave={v => saveConfig({ visibleDurationMs: secondsToMs(v) })} />
+                <NumberField label="Preview chars" value={config.previewMaxChars} onSave={v => saveConfig({ previewMaxChars: v })} />
               </div>
             </div>
 
+            {/* Quiet hours */}
             <div className="rounded-xl border border-rose-300/15 bg-rose-950/10 p-3 md:p-4">
               <div className="mb-3">
-                <div className="text-sm font-semibold text-rose-100">Limits and quiet hours</div>
-                <div className="text-xs text-rose-100/45">Optional controls for future stricter delivery.</div>
+                <div className="text-sm font-semibold text-rose-100">Quiet hours</div>
+                <div className="text-xs text-rose-100/45">Notes won't surface during these hours.</div>
               </div>
               <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                <ToggleField label="Session max" checked={config.sessionMaxEnabled} onChange={(v) => saveConfig({ sessionMaxEnabled: v })} />
-                <NumberField label="Max/session" value={config.sessionMaxCount} onSave={(v) => saveConfig({ sessionMaxCount: v })} />
-                <ToggleField label="Quiet hours" checked={config.quietHoursEnabled} onChange={(v) => saveConfig({ quietHoursEnabled: v })} />
-                <input className="min-w-0 rounded-lg border border-rose-200/10 bg-black/40 px-3 py-2 text-sm text-rose-50" type="time" value={config.quietHoursStart} onChange={(e) => void saveConfig({ quietHoursStart: e.target.value })} />
-                <input className="min-w-0 rounded-lg border border-rose-200/10 bg-black/40 px-3 py-2 text-sm text-rose-50" type="time" value={config.quietHoursEnd} onChange={(e) => void saveConfig({ quietHoursEnd: e.target.value })} />
+                <ToggleField label="Quiet hours" checked={config.quietHoursEnabled} onChange={v => saveConfig({ quietHoursEnabled: v })} />
+                <input className="min-w-0 rounded-lg border border-rose-200/10 bg-black/40 px-3 py-2 text-sm text-rose-50" type="time" value={config.quietHoursStart} onChange={e => void saveConfig({ quietHoursStart: e.target.value })} />
+                <input className="min-w-0 rounded-lg border border-rose-200/10 bg-black/40 px-3 py-2 text-sm text-rose-50" type="time" value={config.quietHoursEnd} onChange={e => void saveConfig({ quietHoursEnd: e.target.value })} />
               </div>
             </div>
           </section>
@@ -338,80 +487,72 @@ export default function MentalNotesPage() {
 
         {previewNote && (
           <div className="rounded-xl border border-white/15 bg-zinc-950/70 p-3 text-sm text-zinc-100 shadow-xl backdrop-blur">
-            <div className="mb-1 text-xs text-zinc-500">Previewed now</div>
+            <div className="mb-1 text-xs text-zinc-500">Next up (peek — not marked as shown)</div>
             {previewNote.text}
           </div>
         )}
 
         {activeTab === 'notes' && (
           <>
-          <section className="flex flex-col gap-2 border-b border-zinc-900 pb-3 md:pb-4">
-            <div className="flex gap-1 overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950 p-1">
-              {[
-                ['active', 'Active'],
-                ['ready', 'Ready'],
-                ['reminders', 'Reminders'],
-                ['cooldown', 'Waiting'],
-                ['archived', 'Archived'],
-                ['all', 'All'],
-              ].map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setView(id as typeof noteView)}
-                  className={`shrink-0 rounded-md px-3 py-2 text-sm transition-colors ${
-                    noteView === id ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200'
-                  }`}
-                >
-                  {label}
+            <section className="flex flex-col gap-2 border-b border-zinc-900 pb-3 md:pb-4">
+              <div className="flex gap-1 overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950 p-1">
+                {([
+                  ['active', 'Active'],
+                  ['scheduled', 'Scheduled'],
+                  ['ready', 'Ready'],
+                  ['reminders', 'Reminders'],
+                  ['snoozed', 'Snoozed'],
+                  ['archived', 'Archived'],
+                  ['all', 'All'],
+                ] as const).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setView(id)}
+                    className={`shrink-0 rounded-md px-3 py-2 text-sm transition-colors ${noteView === id ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1 rounded-lg border border-zinc-900 bg-black p-1">
+                {([['queue', 'Queue'], ['updated', 'Recent'], ['created', 'Created']] as const).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setSort(id)}
+                    className={`rounded-md px-2 py-1.5 text-xs transition-colors ${sort === id ? 'bg-zinc-900 text-zinc-100' : 'text-zinc-600 hover:text-zinc-300'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+                <button type="button" onClick={() => void load()} className="rounded-md px-2 py-1.5 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200">
+                  <RefreshCw size={14} />
                 </button>
-              ))}
-            </div>
-            <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1 rounded-lg border border-zinc-900 bg-black p-1">
-              {[
-                ['queue', 'Queue'],
-                ['updated', 'Recent'],
-                ['created', 'Created'],
-              ].map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setSort(id)}
-                  className={`rounded-md px-2 py-1.5 text-xs transition-colors ${
-                    sort === id ? 'bg-zinc-900 text-zinc-100' : 'text-zinc-600 hover:text-zinc-300'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-              <button type="button" onClick={() => void load()} className="rounded-md px-2 py-1.5 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200">
-                <RefreshCw size={14} />
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsNewModalOpen(true)}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-amber-300/25 bg-[linear-gradient(135deg,rgba(69,26,3,0.55),rgba(76,5,25,0.4))] px-3 text-sm font-medium text-amber-50 shadow-lg hover:bg-amber-950/30"
+              >
+                <Plus size={16} />
+                New note
               </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsNewModalOpen(true)}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-amber-300/25 bg-[linear-gradient(135deg,rgba(69,26,3,0.55),rgba(76,5,25,0.4))] px-3 text-sm font-medium text-amber-50 shadow-lg hover:bg-amber-950/30"
-            >
-              <Plus size={16} />
-              New note
-            </button>
-          </section>
+            </section>
 
-          <section className="flex flex-col gap-3">
-            {visibleNotes.map((note, index) => (
-              <NoteCard
-                key={`${note.id}-${note.updatedAt}`}
-                note={note}
-                index={index}
-                nowMs={nowMs}
-                config={config}
-                onUpdate={updateNote}
-                onAction={noteAction}
-                onDelete={deleteNote}
-              />
-            ))}
-          </section>
+            <section className="flex flex-col gap-3">
+              {visibleNotes.map((note, index) => (
+                <NoteCard
+                  key={`${note.id}-${note.updatedAt}`}
+                  note={note}
+                  index={index}
+                  nowMs={nowMs}
+                  onUpdate={updateNote}
+                  onAction={noteAction}
+                  onDelete={deleteNote}
+                />
+              ))}
+            </section>
           </>
         )}
 
@@ -429,7 +570,7 @@ export default function MentalNotesPage() {
               </div>
               <textarea
                 value={newText}
-                onChange={(e) => setNewText(e.target.value)}
+                onChange={e => setNewText(e.target.value)}
                 className="min-h-44 w-full rounded-xl border border-amber-100/15 bg-black/55 px-3 py-3 text-[15px] leading-relaxed text-amber-50 outline-none placeholder:text-amber-100/30 focus:border-amber-200/40"
                 placeholder="Write the text you want resurfaced..."
               />
@@ -437,7 +578,7 @@ export default function MentalNotesPage() {
                 <div className="text-xs text-amber-100/45">{newText.trim().length} characters</div>
                 <button
                   type="button"
-                  onClick={addNote}
+                  onClick={() => void addNote()}
                   disabled={!newText.trim()}
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-amber-100 px-4 text-sm font-semibold text-black hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-40"
                 >
@@ -460,15 +601,11 @@ function NumberField({ label, value, unit, onSave }: { label: string; value: num
   const commit = () => {
     setFocused(false);
     const trimmed = draft.trim();
-    if (!trimmed) {
-      setDraft(String(value));
-      return;
-    }
+    if (!trimmed) { setDraft(String(value)); return; }
     const next = Number(trimmed);
     if (Number.isFinite(next)) onSave(next);
     else setDraft(String(value));
   };
-
   return (
     <label className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/35 px-2 py-2 text-sm md:px-3">
       <span className="min-w-0 flex-1 truncate text-white/70">{label}</span>
@@ -476,18 +613,12 @@ function NumberField({ label, value, unit, onSave }: { label: string; value: num
         type="text"
         inputMode="numeric"
         value={displayValue}
-        onFocus={() => {
-          setFocused(true);
-          setDraft(String(value));
-        }}
-        onChange={(e) => setDraft(e.target.value.replace(/[^\d.]/g, ''))}
+        onFocus={() => { setFocused(true); setDraft(String(value)); }}
+        onChange={e => setDraft(e.target.value.replace(/[^\d.]/g, ''))}
         onBlur={commit}
-        onKeyDown={(e) => {
+        onKeyDown={e => {
           if (e.key === 'Enter') e.currentTarget.blur();
-          if (e.key === 'Escape') {
-            setDraft(String(value));
-            e.currentTarget.blur();
-          }
+          if (e.key === 'Escape') { setDraft(String(value)); e.currentTarget.blur(); }
         }}
         className="w-16 rounded-md border border-white/10 bg-black/60 px-2 py-1 text-right text-white outline-none focus:border-amber-200/40 md:w-20"
       />
@@ -503,38 +634,31 @@ function ToggleField({ label, checked, icon, onChange }: { label: string; checke
         {icon}
         {label}
       </span>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-amber-300" />
+      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} className="accent-amber-300" />
     </label>
   );
 }
 
 function NoteCard({
-  note,
-  index,
-  nowMs,
-  config,
-  onUpdate,
-  onAction,
-  onDelete,
+  note, index, nowMs, onUpdate, onAction, onDelete,
 }: {
   note: MentalNote;
   index: number;
   nowMs: number;
-  config: Config | null;
-  onUpdate: (note: MentalNote, patch: Partial<{ text: string; reminderAt: string | null; customCooldownMs: number | null }>) => Promise<void>;
+  onUpdate: (note: MentalNote, patch: Partial<{ text: string; reminderAt: string | null }>) => Promise<void>;
   onAction: (action: string, id: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [draft, setDraft] = useState(note.text);
-  const [customCooldownDays, setCustomCooldownDays] = useState(note.customCooldownMs === null ? '' : String(msToDays(note.customCooldownMs)));
   const [reminderDate, setReminderDate] = useState(dateInputValue(note.reminderAt));
   const [reminderTime, setReminderTime] = useState(timeInputValue(note.reminderAt));
 
-  const tone = statusTone[note.status] || statusTone.Queued;
+  const tone = statusTone[note.status] || statusTone.Scheduled;
   const reminderCountdown = note.reminderAt ? countdown(note.reminderAt, nowMs) : null;
-  const queueCountdown = countdown(note.readyAt, nowMs);
+  const scheduleCountdown = countdown(note.readyAt, nowMs);
   const customIsPast = isPastReminderParts(reminderDate, reminderTime);
+
   const applyCustomReminder = () => {
     const clamped = clampReminderParts(reminderDate, reminderTime);
     setReminderDate(clamped.date);
@@ -554,15 +678,15 @@ function NoteCard({
               <Eye size={12} />
               {note.shownCount}
             </span>
-            {!note.reminderAt && (
+            {!note.reminderAt && note.readyAt && (
               <span className="inline-flex items-center gap-1 rounded border border-zinc-800 px-1.5 py-0.5 text-[11px] text-zinc-400 md:px-2 md:py-1 md:text-xs">
-                <Shuffle size={12} />
-                <span className="text-zinc-600">Queue</span> {queueCountdown}
+                <Clock3 size={12} />
+                {scheduleCountdown}
               </span>
             )}
             {reminderCountdown && (
               <span className="inline-flex items-center gap-1 rounded border border-violet-700/50 bg-violet-950/20 px-1.5 py-0.5 text-[11px] text-violet-200 md:px-2 md:py-1 md:text-xs">
-                <Clock3 size={12} />
+                <Bell size={12} />
                 <span className="text-violet-400">Reminder</span> {reminderCountdown}
               </span>
             )}
@@ -573,7 +697,7 @@ function NoteCard({
             className="rounded-lg border border-zinc-800 bg-black/40 p-2 text-zinc-300 hover:bg-zinc-900"
             title="Note settings"
           >
-            <Settings2 size={16} />
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
         </div>
         <div className="rounded-lg border border-zinc-800 bg-black/45 shadow-inner">
@@ -596,7 +720,7 @@ function NoteCard({
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <div className="text-base font-semibold text-zinc-100">Note settings</div>
-                <div className="text-xs text-zinc-500">{note.status} · shown {note.shownCount}</div>
+                <div className="text-xs text-zinc-500">{note.status} · shown {note.shownCount}×</div>
               </div>
               <button type="button" onClick={() => setIsSettingsOpen(false)} className="rounded-full border border-zinc-800 p-2 text-zinc-300 hover:bg-zinc-900">
                 <X size={16} />
@@ -608,14 +732,14 @@ function NoteCard({
                 Text
                 <textarea
                   value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
+                  onChange={e => setDraft(e.target.value)}
                   className="mt-1 min-h-36 w-full rounded-lg border border-zinc-700 bg-black px-3 py-3 text-[15px] leading-relaxed text-zinc-100 outline-none focus:border-zinc-500"
                 />
               </label>
 
               <div className="rounded border border-zinc-800 bg-black/40 p-2">
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="text-xs text-zinc-500">Reminder</span>
+                  <span className="text-xs text-zinc-500">Remind me later</span>
                   {note.reminderAt && (
                     <button type="button" onClick={() => void onUpdate(note, { reminderAt: null })} className="text-xs text-zinc-500 hover:text-zinc-200">
                       Clear
@@ -623,16 +747,7 @@ function NoteCard({
                   )}
                 </div>
                 <div className="grid grid-cols-4 gap-1.5">
-                  {[
-                    ['2m', 2],
-                    ['5m', 5],
-                    ['15m', 15],
-                    ['30m', 30],
-                    ['1h', 60],
-                    ['3h', 180],
-                    ['1d', 1440],
-                    ['Now', 0],
-                  ].map(([label, minutes]) => (
+                  {([['2m', 2], ['5m', 5], ['15m', 15], ['30m', 30], ['1h', 60], ['3h', 180], ['1d', 1440], ['Now', 0]] as const).map(([label, minutes]) => (
                     <button
                       key={label}
                       type="button"
@@ -650,7 +765,7 @@ function NoteCard({
                       type="date"
                       min={currentDateInput()}
                       value={reminderDate}
-                      onChange={(e) => {
+                      onChange={e => {
                         const nextDate = e.target.value < currentDateInput() ? currentDateInput() : e.target.value;
                         setReminderDate(nextDate);
                       }}
@@ -659,7 +774,7 @@ function NoteCard({
                     <input
                       type="time"
                       value={reminderTime}
-                      onChange={(e) => setReminderTime(e.target.value)}
+                      onChange={e => setReminderTime(e.target.value)}
                       onBlur={() => {
                         const next = clampReminderParts(reminderDate, reminderTime);
                         setReminderDate(next.date);
@@ -671,29 +786,12 @@ function NoteCard({
                   <button
                     type="button"
                     onClick={applyCustomReminder}
-                    className={`mt-2 w-full rounded border px-3 py-2 text-sm font-medium hover:bg-violet-950/40 ${
-                      customIsPast ? 'border-amber-600/60 bg-amber-950/20 text-amber-100' : 'border-violet-700/60 bg-violet-950/20 text-violet-100'
-                    }`}
+                    className={`mt-2 w-full rounded border px-3 py-2 text-sm font-medium hover:bg-violet-950/40 ${customIsPast ? 'border-amber-600/60 bg-amber-950/20 text-amber-100' : 'border-violet-700/60 bg-violet-950/20 text-violet-100'}`}
                   >
                     {customIsPast ? 'Set as now' : 'Set reminder'}
                   </button>
                 </div>
               </div>
-
-              <label className="text-xs text-zinc-500">
-                Cooldown override
-                <input
-                  type="number"
-                  placeholder={config ? `${msToDays(config.cooldownMs)}d global` : 'global'}
-                  value={customCooldownDays}
-                  onChange={(e) => setCustomCooldownDays(e.target.value)}
-                  onBlur={() => {
-                    const value = customCooldownDays.trim();
-                    void onUpdate(note, { customCooldownMs: value ? daysToMs(Number(value)) : null });
-                  }}
-                  className="mt-1 w-full rounded border border-zinc-800 bg-black px-2 py-1.5 text-sm text-zinc-200"
-                />
-              </label>
 
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => void onUpdate(note, { text: draft })} className="rounded bg-zinc-100 px-3 py-2 text-sm font-medium text-black hover:bg-white">
@@ -702,10 +800,7 @@ function NoteCard({
                 <button type="button" onClick={() => void onAction(note.archivedAt ? 'restore' : 'archive', note.id)} className="rounded border border-zinc-800 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-900">
                   {note.archivedAt ? 'Restore' : 'Archive'}
                 </button>
-                <button type="button" onClick={() => void onAction('remember', note.id)} className="rounded border border-emerald-800/60 px-3 py-2 text-sm text-emerald-300 hover:bg-emerald-950/20">
-                  Remembered
-                </button>
-                <button type="button" onClick={() => void onDelete(note.id)} className="rounded border border-red-800/60 px-3 py-2 text-sm text-red-300 hover:bg-red-950/20">
+                <button type="button" onClick={() => void onDelete(note.id)} className="col-span-2 rounded border border-red-800/60 px-3 py-2 text-sm text-red-300 hover:bg-red-950/20">
                   Delete
                 </button>
               </div>

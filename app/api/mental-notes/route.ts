@@ -6,7 +6,7 @@ import {
   getMentalNotesConfig,
   getNextMentalNote,
   listMentalNotes,
-  rememberMentalNote,
+  scheduleAllNotes,
   setMentalNotesConfig,
   snoozeMentalNote,
   updateMentalNote,
@@ -24,9 +24,11 @@ export async function GET(request: NextRequest) {
 
   try {
     const action = request.nextUrl.searchParams.get('action') || '';
+
     if (action === 'config') {
       return NextResponse.json({ config: getMentalNotesConfig() });
     }
+
     if (action === 'next') {
       const force = request.nextUrl.searchParams.get('force') === '1';
       const remindersOnly = request.nextUrl.searchParams.get('remindersOnly') === '1';
@@ -36,10 +38,7 @@ export async function GET(request: NextRequest) {
 
     const filter = request.nextUrl.searchParams.get('filter') || 'active';
     const sort = request.nextUrl.searchParams.get('sort') || 'queue';
-    return NextResponse.json({
-      notes: listMentalNotes({ filter, sort }),
-      config: getMentalNotesConfig(),
-    });
+    return NextResponse.json({ notes: listMentalNotes({ filter, sort }), config: getMentalNotesConfig() });
   } catch (error) {
     console.error('Mental notes GET error:', error);
     return jsonError('Internal Server Error', 500);
@@ -58,16 +57,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ config: setMentalNotesConfig(body.config && typeof body.config === 'object' ? body.config : {}) });
     }
 
+    if (action === 'schedule') {
+      const f = typeof body.frequencyFactor === 'number' ? body.frequencyFactor : getMentalNotesConfig().frequencyFactor;
+      scheduleAllNotes(Math.max(0, Math.min(1, f)));
+      return NextResponse.json({ config: getMentalNotesConfig() });
+    }
+
     if (action === 'snooze') {
       const id = typeof body.id === 'string' ? body.id : '';
       if (!id) return jsonError('Missing note id');
       return NextResponse.json({ note: snoozeMentalNote(id) });
-    }
-
-    if (action === 'remember') {
-      const id = typeof body.id === 'string' ? body.id : '';
-      if (!id) return jsonError('Missing note id');
-      return NextResponse.json({ note: rememberMentalNote(id) });
     }
 
     if (action === 'archive' || action === 'restore') {
@@ -95,17 +94,9 @@ export async function PATCH(request: NextRequest) {
     const id = typeof body.id === 'string' ? body.id : '';
     if (!id) return jsonError('Missing note id');
 
-    const customCooldownMs =
-      body.customCooldownMs === null
-        ? null
-        : typeof body.customCooldownMs === 'number' && Number.isFinite(body.customCooldownMs)
-          ? Math.max(0, Math.round(body.customCooldownMs))
-          : undefined;
-
     const note = updateMentalNote(id, {
       text: typeof body.text === 'string' ? body.text : undefined,
       reminderAt: body.reminderAt === null || typeof body.reminderAt === 'string' ? body.reminderAt : undefined,
-      customCooldownMs,
     });
     if (!note) return jsonError('Note not found', 404);
     return NextResponse.json({ note });
