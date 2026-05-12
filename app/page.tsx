@@ -4,7 +4,7 @@ import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { debounce } from 'lodash';
 import TiptapEditor from '../components/TiptapEditor';
 import VoiceChat from '../components/VoiceChat';
-import { ArrowDown, Plus, Settings2, Trash2, X } from 'lucide-react';
+import { ArrowDown, ChevronDown, Plus, Settings2, Trash2, X } from 'lucide-react';
 import { authFetch } from '@/lib/auth-fetch';
 import SaveSyncIndicator from '@/components/SaveSyncIndicator';
 import { useSaveSyncStore } from '@/lib/stores/save-sync-store';
@@ -12,11 +12,15 @@ import { extractLastWordFromTiptapJSON } from '@/lib/tiptap-text';
 import { clearDraft, getDraft, setDraft } from '@/lib/draft-storage';
 import { useUnlockStore } from '@/lib/stores/unlock-store';
 
+// Disable browser scroll restoration at module load time so it doesn't fight
+// our auto-jump. Needs to happen before React mounts.
+if (typeof window !== 'undefined') history.scrollRestoration = 'manual';
+
 const DOC_ID = 'infinite-doc-v1';
 const DEFAULT_JUMP_BUTTON_COLOR = '#3b82f6';
 
 type BookmarkInfo = { id: string; name: string };
-type JumpButton = { id: string; label: string; bookmarkId: string | null; color: string };
+type JumpButton = { id: string; label: string; bookmarkId: string | null; color: string; autoJump: boolean };
 
 function extractBookmarksFromDocJson(doc: unknown): BookmarkInfo[] {
   const out: BookmarkInfo[] = [];
@@ -77,6 +81,7 @@ export default function Home() {
   const [jumpButtons, setJumpButtons] = useState<JumpButton[]>([]);
   const [jumpButtonsError, setJumpButtonsError] = useState<string | null>(null);
   const [availableBookmarks, setAvailableBookmarks] = useState<BookmarkInfo[]>([]);
+  const [jumpButtonsVisible, setJumpButtonsVisible] = useState(true);
   const [isJumpButtonModalOpen, setIsJumpButtonModalOpen] = useState(false);
   const [jumpButtonDraft, setJumpButtonDraft] = useState<JumpButton | null>(null);
   const [isJumpButtonDraftNew, setIsJumpButtonDraftNew] = useState(false);
@@ -101,6 +106,7 @@ export default function Home() {
           label: String(b.label),
           bookmarkId: typeof b.bookmarkId === 'string' ? b.bookmarkId : null,
           color: isHexColor(b.color) ? String(b.color) : DEFAULT_JUMP_BUTTON_COLOR,
+          autoJump: b.autoJump === true,
         }));
       setJumpButtons(next);
     } catch (e: unknown) {
@@ -133,6 +139,35 @@ export default function Home() {
     void loadJumpButtons();
   }, [loadJumpButtons]);
 
+  useEffect(() => {
+    if (isLoading) return;
+    const autoBtn = jumpButtons.find(b => b.autoJump && b.bookmarkId);
+    if (!autoBtn?.bookmarkId) return;
+
+    const bookmarkId = autoBtn.bookmarkId;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let attempts = 0;
+
+    const tryScroll = () => {
+      if (cancelled) return;
+      const el = document.querySelector(`[data-bookmark-id="${cssEscape(bookmarkId)}"]`) as HTMLElement | null;
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        const top = window.scrollY + rect.top - window.innerHeight / 2 + rect.height / 2;
+        window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+        return;
+      }
+      if (++attempts < 40) timer = setTimeout(tryScroll, 150);
+    };
+
+    timer = setTimeout(tryScroll, 500);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [isLoading, jumpButtons]);
+
   const scrollToBookmark = (bookmarkId: string | null) => {
     if (!bookmarkId) return;
     const el = document.querySelector(`[data-bookmark-id="${cssEscape(bookmarkId)}"]`) as HTMLElement | null;
@@ -150,6 +185,7 @@ export default function Home() {
       label: `Jump ${jumpButtons.length + 1}`,
       bookmarkId: first,
       color: DEFAULT_JUMP_BUTTON_COLOR,
+      autoJump: false,
     });
     setIsJumpButtonDraftNew(true);
     setIsJumpButtonModalOpen(true);
@@ -175,9 +211,11 @@ export default function Home() {
     const label = jumpButtonDraft.label.trim();
     if (!label) return;
 
-    const next = isJumpButtonDraftNew
-      ? [...jumpButtons, { ...jumpButtonDraft, label }]
-      : jumpButtons.map((b) => (b.id === jumpButtonDraft.id ? { ...jumpButtonDraft, label } : b));
+    const updated = { ...jumpButtonDraft, label };
+    const next = (isJumpButtonDraftNew
+      ? [...jumpButtons, updated]
+      : jumpButtons.map((b) => (b.id === updated.id ? updated : b))
+    ).map((b) => b.id !== updated.id && updated.autoJump ? { ...b, autoJump: false } : b);
 
     await saveJumpButtons(next);
     closeJumpButtonModal();
@@ -447,37 +485,60 @@ export default function Home() {
         {/* Jump buttons (scrollable) */}
         {jumpButtons.length > 0 && (
           <div className="mb-4">
-            <div className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1 -mx-1 px-1">
-              {jumpButtons.map((b) => {
-                const hasTarget = b.bookmarkId && availableBookmarks.some((t) => t.id === b.bookmarkId);
-                const bg = isHexColor(b.color) ? b.color : DEFAULT_JUMP_BUTTON_COLOR;
-                const fg = textColorForBg(bg);
-                return (
-                  <div key={b.id} className="shrink-0 inline-flex rounded overflow-hidden border border-zinc-700">
-                    <button
-                      type="button"
-                      onClick={() => scrollToBookmark(b.bookmarkId)}
-                      className="px-3 py-2 text-sm font-medium whitespace-nowrap"
-                      style={{
-                        backgroundColor: bg,
-                        color: fg,
-                        opacity: hasTarget ? 1 : 0.55,
-                      }}
-                      title={hasTarget ? `Jump to tag` : 'Tag missing (reconfigure)'}
-                    >
-                      {b.label}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openEditJumpButton(b.id)}
-                      className="px-2 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-l border-zinc-700 transition-colors"
-                      title="Configure"
-                    >
-                      <Settings2 size={16} />
-                    </button>
-                  </div>
-                );
-              })}
+            {/* Toggle */}
+            <button
+              type="button"
+              onClick={() => setJumpButtonsVisible(v => !v)}
+              className="mb-1.5 inline-flex w-1/2 items-center justify-center gap-1.5 rounded border border-zinc-700 px-3 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+            >
+              <ChevronDown
+                size={13}
+                className={`transition-transform duration-300 ${jumpButtonsVisible ? 'rotate-0' : '-rotate-90'}`}
+              />
+              Jump buttons
+            </button>
+            {/* Animated slide container */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateRows: jumpButtonsVisible ? '1fr' : '0fr',
+                transition: 'grid-template-rows 0.25s ease',
+              }}
+            >
+              <div className="overflow-hidden">
+                <div className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1 -mx-1 px-1 pt-0.5">
+                  {jumpButtons.map((b) => {
+                    const hasTarget = b.bookmarkId && availableBookmarks.some((t) => t.id === b.bookmarkId);
+                    const bg = isHexColor(b.color) ? b.color : DEFAULT_JUMP_BUTTON_COLOR;
+                    const fg = textColorForBg(bg);
+                    return (
+                      <div key={b.id} className="shrink-0 inline-flex rounded overflow-hidden border border-zinc-700">
+                        <button
+                          type="button"
+                          onClick={() => scrollToBookmark(b.bookmarkId)}
+                          className="px-3 py-2 text-sm font-medium whitespace-nowrap"
+                          style={{
+                            backgroundColor: bg,
+                            color: fg,
+                            opacity: hasTarget ? 1 : 0.55,
+                          }}
+                          title={hasTarget ? `Jump to tag` : 'Tag missing (reconfigure)'}
+                        >
+                          {b.label}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openEditJumpButton(b.id)}
+                          className="px-2 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-l border-zinc-700 transition-colors"
+                          title="Configure"
+                        >
+                          <Settings2 size={16} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
             {jumpButtonsError && (
               <div className="mt-2 text-xs text-red-300 border border-red-700/40 bg-red-950/20 rounded px-3 py-2">
@@ -581,6 +642,21 @@ export default function Home() {
                       </div>
                     </div>
                   </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-800/40 px-3 py-2.5">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-sm text-zinc-200 font-medium">Auto-jump on page start</span>
+                    <span className="text-xs text-zinc-500">Scrolls here automatically on every visit</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setJumpButtonDraft((d) => (d ? { ...d, autoJump: !d.autoJump } : d))}
+                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${jumpButtonDraft.autoJump ? 'bg-blue-600' : 'bg-zinc-700'}`}
+                    title={jumpButtonDraft.autoJump ? 'Disable auto-jump' : 'Enable auto-jump'}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${jumpButtonDraft.autoJump ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
                 </div>
               </div>
 

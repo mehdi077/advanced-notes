@@ -8,7 +8,7 @@ import { Highlight } from '@tiptap/extension-highlight';
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { debounce } from 'lodash';
-import { ChevronRight, ChevronLeft, Bold, Strikethrough, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, MessageSquare, Play, Pause, SkipBack, SkipForward, Database, Plus, Minus, BookOpen, Tag, ArrowUp, ChartNoAxesCombined, BookmarkPlus, NotebookPen, CircleAlert } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronLeft, Bold, Strikethrough, Highlighter, Palette, Sparkles, Loader2, DollarSign, RefreshCw, Check, X, ChevronsRight, RotateCcw, Split, Star, MessageSquare, Play, Pause, SkipBack, SkipForward, Database, Plus, Minus, BookOpen, Tag, ArrowUp, ChartNoAxesCombined, BookmarkPlus, NotebookPen, CircleAlert } from 'lucide-react';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { useVoiceStore } from '@/lib/stores/useVoiceStore';
 import { DEFAULT_MODEL, ModelConfig, ModelId, ModelPricing, formatCost } from '@/lib/model-config';
@@ -142,6 +142,9 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
   const [focusColorRules, setFocusColorRules] = useState<Record<string, string>>(DEFAULT_FOCUS_COLOR_RULES);
   const [selectedFocusColor, setSelectedFocusColor] = useState(FOCUS_COLORS[0].color);
   const [isTextColorPaletteOpen, setIsTextColorPaletteOpen] = useState(false);
+  const [fabButtonsVisible, setFabButtonsVisible] = useState(() => {
+    try { return localStorage.getItem('fabButtonsVisible') !== 'false'; } catch { return true; }
+  });
   const [didSaveMentalNote, setDidSaveMentalNote] = useState(false);
   const [isMentalNoteModeOpen, setIsMentalNoteModeOpen] = useState(false);
   const [isMentalReminderOpen, setIsMentalReminderOpen] = useState(false);
@@ -3052,6 +3055,33 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
           {/* Main FAB - Generate completion */}
           {!completion.isActive && !isAutoCompleting && !isFocusHighlighting && (
             <div className="flex flex-col items-end gap-3 pointer-events-none">
+              {/* Toggle button — half height of FAB buttons, always visible */}
+              <button
+                type="button"
+                tabIndex={-1}
+                onMouseDown={(e) => e.preventDefault()}
+                onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onTouchEnd={(e) => { e.preventDefault(); setFabButtonsVisible(v => { const next = !v; try { localStorage.setItem('fabButtonsVisible', String(next)); } catch {} return next; }); }}
+                onClick={() => setFabButtonsVisible(v => { const next = !v; try { localStorage.setItem('fabButtonsVisible', String(next)); } catch {} return next; })}
+                className="flex h-6 w-12 items-center justify-center rounded-lg bg-zinc-900/95 backdrop-blur-sm hover:bg-zinc-800 transition-all shadow-lg border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 select-none pointer-events-auto"
+                style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
+                title={fabButtonsVisible ? 'Hide buttons' : 'Show buttons'}
+              >
+                <ChevronDown
+                  size={14}
+                  className={`transition-transform duration-300 ${fabButtonsVisible ? 'rotate-0' : 'rotate-180'}`}
+                />
+              </button>
+              {/* Animated wrapper — slides down to hide */}
+              <div
+                className="flex flex-col items-end gap-3 pointer-events-none transition-all duration-300 ease-in-out"
+                style={{
+                  opacity: fabButtonsVisible ? 1 : 0,
+                  transform: fabButtonsVisible ? 'translateY(0)' : 'translateY(12px)',
+                  pointerEvents: fabButtonsVisible ? 'none' : 'none',
+                  visibility: fabButtonsVisible ? 'visible' : 'hidden',
+                }}
+              >
               <button
                 type="button"
                 tabIndex={-1}
@@ -3351,6 +3381,7 @@ const TiptapEditor = ({ initialContent, onContentUpdate }: TiptapEditorProps) =>
                 <MessageSquare size={20} />
               </button>
 
+              </div>{/* end animated wrapper */}
             </div>
           )}
         </div>,

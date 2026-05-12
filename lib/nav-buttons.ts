@@ -5,6 +5,7 @@ export type JumpButtonConfig = {
   label: string;
   bookmarkId: string | null;
   color: string; // hex (e.g. #3b82f6)
+  autoJump: boolean;
 };
 
 function keyForDoc(docId: string): string {
@@ -44,8 +45,9 @@ export function getJumpButtons(docId: string): JumpButtonConfig[] {
       const label = typeof obj.label === 'string' ? obj.label.trim() : '';
       const bookmarkId = typeof obj.bookmarkId === 'string' ? obj.bookmarkId.trim() : null;
       const color = isHexColor(obj.color) ? obj.color.trim() : '#3b82f6';
+      const autoJump = obj.autoJump === true;
       if (!bid || !label) continue;
-      out.push({ id: bid, label, bookmarkId: bookmarkId || null, color });
+      out.push({ id: bid, label, bookmarkId: bookmarkId || null, color, autoJump });
       if (out.length >= 50) break;
     }
     return out;
@@ -64,8 +66,9 @@ export function setJumpButtons(docId: string, buttons: JumpButtonConfig[]): Jump
     const label = typeof b?.label === 'string' ? b.label.trim() : '';
     const bookmarkId = typeof b?.bookmarkId === 'string' ? b.bookmarkId.trim() : null;
     const color = isHexColor((b as JumpButtonConfig | undefined)?.color) ? String(b.color).trim() : '#3b82f6';
+    const autoJump = (b as JumpButtonConfig | undefined)?.autoJump === true;
     if (!bid || !label) continue;
-    safe.push({ id: bid, label, bookmarkId: bookmarkId || null, color });
+    safe.push({ id: bid, label, bookmarkId: bookmarkId || null, color, autoJump });
     if (safe.length >= 50) break;
   }
 

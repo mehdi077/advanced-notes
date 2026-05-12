@@ -166,7 +166,11 @@ function dayInterval(hourPx: number): number {
 
 type TimelineDot = { id: string; text: string; ms: number; isReminder: boolean };
 
+const TIMELINE_BASELINE = 52;
+const TIMELINE_HEIGHT = 108;
+
 function Timeline({ dots, nowMs, hourPx }: { dots: TimelineDot[]; nowMs: number; hourPx: number }) {
+  const [hoveredDot, setHoveredDot] = useState<(TimelineDot & { cx: number; cy: number }) | null>(null);
   const totalMs = TIMELINE_DAYS * 24 * 3_600_000;
   const totalWidth = TIMELINE_DAYS * 24 * hourPx;
   const tick = tickInterval(hourPx);
@@ -201,57 +205,102 @@ function Timeline({ dots, nowMs, hourPx }: { dots: TimelineDot[]; nowMs: number;
 
   const visibleDots = dots.filter(d => d.ms > nowMs && d.ms < nowMs + totalMs);
 
+  const nowTimeLabel = new Date(nowMs).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+
   return (
     <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-black/60">
-      <div style={{ width: totalWidth, position: 'relative', height: 72 }}>
+      <div style={{ width: totalWidth, position: 'relative', height: TIMELINE_HEIGHT }}>
+        {/* Day separator lines — full height to baseline, clearly distinct */}
+        {hourMarks.filter(m => m.isDay).map(m => (
+          <div
+            key={`day-sep-${m.x}`}
+            style={{ position: 'absolute', left: m.x, top: 0, height: TIMELINE_BASELINE }}
+            className="w-px bg-zinc-500/40"
+          />
+        ))}
+        {/* Hour tick lines — short marks near baseline, subtle */}
+        {hourMarks.filter(m => !m.isDay).map(m => (
+          <div
+            key={`hr-${m.x}`}
+            style={{ position: 'absolute', left: m.x, top: TIMELINE_BASELINE - 12, height: 12 }}
+            className="w-px bg-zinc-700/60"
+          />
+        ))}
         {/* Day labels */}
         {dayMarks.map(m => (
           <div
             key={m.x}
             style={{ position: 'absolute', left: m.x, top: 4, transform: 'translateX(-50%)' }}
-            className="whitespace-nowrap text-[10px] text-zinc-400"
+            className="whitespace-nowrap text-[10px] font-medium text-zinc-400"
           >
             {m.label}
           </div>
-        ))}
-        {/* Hour tick lines */}
-        {hourMarks.map(m => (
-          <div
-            key={m.x}
-            style={{ position: 'absolute', left: m.x, top: 20, height: 32 }}
-            className={`w-px ${m.isDay ? 'bg-zinc-700' : 'bg-zinc-800/70'}`}
-          />
         ))}
         {/* Hour labels */}
         {hourMarks.filter(m => m.label).map(m => (
           <div
             key={`lbl-${m.x}`}
-            style={{ position: 'absolute', left: m.x, bottom: 5, transform: 'translateX(-50%)' }}
+            style={{ position: 'absolute', left: m.x, top: 22, transform: 'translateX(-50%)' }}
             className="text-[9px] text-zinc-600"
           >
             {m.label}
           </div>
         ))}
+        {/* Now marker — full height, amber */}
+        <div style={{ position: 'absolute', left: 0, top: 0, height: TIMELINE_HEIGHT }} className="w-0.5 bg-amber-500/70" />
+        {/* Now label */}
+        <div
+          style={{ position: 'absolute', left: 5, top: 4 }}
+          className="whitespace-nowrap text-[10px] font-semibold text-amber-400"
+        >
+          ▶ {nowTimeLabel}
+        </div>
         {/* Baseline */}
-        <div style={{ position: 'absolute', left: 0, right: 0, top: 36 }} className="h-px bg-zinc-800" />
-        {/* Now marker */}
-        <div style={{ position: 'absolute', left: 0, top: 20, height: 32 }} className="w-0.5 bg-amber-500/70" />
+        <div style={{ position: 'absolute', left: 0, right: 0, top: TIMELINE_BASELINE }} className="h-px bg-zinc-700/70" />
         {/* Dots */}
         {visibleDots.map(dot => {
           const x = ((dot.ms - nowMs) / 3_600_000) * hourPx;
           return (
             <div
               key={dot.id}
-              title={dot.text.length > 80 ? `${dot.text.slice(0, 80)}…` : dot.text}
-              style={{ position: 'absolute', left: x, top: 36, transform: 'translate(-50%, -50%)' }}
-              className={`h-2.5 w-2.5 rounded-full border transition-all ${
+              onMouseEnter={(e) => setHoveredDot({ ...dot, cx: e.clientX, cy: e.clientY })}
+              onMouseMove={(e) => setHoveredDot(h => h ? { ...h, cx: e.clientX, cy: e.clientY } : null)}
+              onMouseLeave={() => setHoveredDot(null)}
+              style={{ position: 'absolute', left: x, top: TIMELINE_BASELINE, transform: 'translate(-50%, -50%)' }}
+              className={`h-3 w-3 cursor-default rounded-full border-2 transition-all hover:scale-125 ${
                 dot.isReminder
-                  ? 'border-violet-400 bg-violet-500'
-                  : 'border-amber-400/80 bg-amber-500'
+                  ? 'border-violet-400 bg-violet-500/80'
+                  : 'border-amber-400/80 bg-amber-500/80'
               }`}
             />
           );
         })}
+        {/* Hover tooltip — rendered fixed so it escapes overflow-x:auto clipping */}
+        {hoveredDot && (() => {
+          const W = 192;
+          const vw = typeof window !== 'undefined' ? window.innerWidth : 800;
+          const vh = typeof window !== 'undefined' ? window.innerHeight : 600;
+          const left = Math.max(8, Math.min(vw - W - 8, hoveredDot.cx - W / 2));
+          const top = hoveredDot.cy + 18 > vh - 80 ? hoveredDot.cy - 70 : hoveredDot.cy + 18;
+          const timeStr = new Date(hoveredDot.ms).toLocaleString(undefined, {
+            weekday: 'short', month: 'short', day: 'numeric',
+            hour: '2-digit', minute: '2-digit',
+          });
+          const textPreview = hoveredDot.text.length > 65
+            ? `${hoveredDot.text.slice(0, 65)}…`
+            : hoveredDot.text;
+          return (
+            <div
+              style={{ position: 'fixed', left, top, width: W, zIndex: 99999 }}
+              className="pointer-events-none rounded-lg border border-zinc-700 bg-zinc-900/98 px-2.5 py-2 text-xs shadow-2xl backdrop-blur"
+            >
+              <div className={`mb-0.5 font-semibold ${hoveredDot.isReminder ? 'text-violet-300' : 'text-amber-300'}`}>
+                {timeStr}
+              </div>
+              <div className="leading-snug text-zinc-300">{textPreview}</div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
